@@ -2,7 +2,7 @@
   "name": "claude-bridge",
   "displayName": "Claude Bridge",
   "description": "Usa Claude (claude.ai) dentro VS Code tramite il tuo server VS Code Bridge, senza API.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "ale-local",
   "license": "MIT",
   "engines": { "vscode": "^1.80.0" },
@@ -20,8 +20,17 @@
       { "command": "claudeBridge.configure", "title": "Configura (URL e token)", "category": "Claude Bridge" },
       { "command": "claudeBridge.ask", "title": "Chiedi a Claude", "category": "Claude Bridge" },
       { "command": "claudeBridge.editSelection", "title": "Modifica selezione con Claude", "category": "Claude Bridge" },
+      { "command": "claudeBridge.attach", "title": "Allega a Claude", "category": "Claude Bridge", "icon": "$(new-file)" },
+      { "command": "claudeBridge.toggleAgent", "title": "Attiva/disattiva la modalità agente", "category": "Claude Bridge" },
+      { "command": "claudeBridge.undoLast", "title": "Annulla le modifiche di Claude dell'ultima richiesta", "category": "Claude Bridge" },
+      { "command": "claudeBridge.commitMessage", "title": "Scrivi il messaggio di commit con Claude", "category": "Claude Bridge", "icon": "$(sparkle)" },
+      { "command": "claudeBridge.fixDiagnostic", "title": "Chiedi a Claude di sistemare il problema", "category": "Claude Bridge" },
+      { "command": "claudeBridge.handoff", "title": "Passa a una nuova chat di claude.ai", "category": "Claude Bridge" },
+      { "command": "claudeBridge.openMemory", "title": "Apri la memoria di progetto", "category": "Claude Bridge" },
+      { "command": "claudeBridge.history", "title": "Conversazioni passate", "category": "Claude Bridge" },
+      { "command": "claudeBridge.linkChat", "title": "Collega la conversazione alla chat di claude.ai", "category": "Claude Bridge" },
       { "command": "claudeBridge.stop", "title": "Ferma l'ascolto di Claude", "category": "Claude Bridge" },
-      { "command": "claudeBridge.clear", "title": "Pulisci la chat", "category": "Claude Bridge" },
+      { "command": "claudeBridge.clear", "title": "Nuova conversazione (archivia quella attuale)", "category": "Claude Bridge" },
       { "command": "claudeBridge.copyPrompt", "title": "Copia il prompt per claude.ai", "category": "Claude Bridge" }
     ],
     "keybindings": [
@@ -31,7 +40,20 @@
     "menus": {
       "editor/context": [
         { "command": "claudeBridge.ask", "group": "claude@1" },
-        { "command": "claudeBridge.editSelection", "group": "claude@2", "when": "editorHasSelection" }
+        { "command": "claudeBridge.editSelection", "group": "claude@2", "when": "editorHasSelection" },
+        { "command": "claudeBridge.attach", "group": "claude@3" }
+      ],
+      "explorer/context": [
+        { "command": "claudeBridge.attach", "group": "claude@1" }
+      ],
+      "editor/title/context": [
+        { "command": "claudeBridge.attach", "group": "claude@1" }
+      ],
+      "scm/title": [
+        { "command": "claudeBridge.commitMessage", "group": "navigation", "when": "scmProvider == git" }
+      ],
+      "commandPalette": [
+        { "command": "claudeBridge.fixDiagnostic", "when": "false" }
       ]
     },
     "configuration": {
@@ -41,6 +63,11 @@
           "type": "string",
           "default": "https://vscode-bridge.a-addabbo30.workers.dev",
           "description": "Indirizzo del tuo server VS Code Bridge (Cloudflare Worker)."
+        },
+        "claudeBridge.windowName": {
+          "type": "string",
+          "default": "",
+          "description": "Nome di questa finestra quando ne colleghi più di una (vuoto = nome della cartella · nome del computer)."
         },
         "claudeBridge.autoApproveCommands": {
           "type": "array",
