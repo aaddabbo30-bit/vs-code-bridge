@@ -35,8 +35,11 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   const file = (...p) => path.join(root, ...p);
   const read = (...p) => fs.readFileSync(file(...p), 'utf8');
 
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-home-'));
+  process.env.HOME = home; // ~ is this folder for the extension
   const mock = create(root);
-  mock.config.serverUrl = B;
+  // settings and token as an earlier version saved them: they must move to the new names
+  mock.config.claudeBridge.serverUrl = B;
   await mock.context.secrets.store('claudeBridge.token', T);
   const orig = Module._load;
   Module._load = function (req, ...rest) { return req === 'vscode' ? mock.vscode : orig.call(this, req, ...rest); };
@@ -50,6 +53,7 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   assert(mock.view.webview.html.includes('codicon.css') && mock.view.webview.html.includes('font-src'), 'panel html loads the icons');
   await until(() => st() && st().conn === 'online', 'extension online');
   assert(true, 'extension connected to the server');
+  assert(mock.config.aiBridge.serverUrl === B && (await mock.context.secrets.get('aiBridge.token')) === T, 'old settings and token migrated');
 
   // ---------- the prompt names this window ----------
   mock.answers.pick = (items) => items.find((i) => i.id === 'new');
@@ -58,7 +62,7 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   assert(win && mock.clipboard.text.includes('follow_vscode'), 'copied prompt names the window');
   mock.answers.pick = (items) => items.find((i) => i.id === 'existing');
   await panel({ type: 'copyPrompt' });
-  assert(mock.clipboard.text.includes('Collega questa chat') && mock.clipboard.text.includes(`window "${win}"`), 'prompt for an existing chat');
+  assert(mock.clipboard.text.includes('Connect this chat') && mock.clipboard.text.includes(`window "${win}"`), 'prompt for an existing chat');
 
   // ---------- first round + request with an attached file ----------
   const f1P = tool('follow_vscode', { window: win });
@@ -95,7 +99,7 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   const bad = await tool('propose_changes', { request_id: rq1, window: win, description: 'x', files: [{ path: 'src/a.py', edits: [{ old_text: 'y = 3', new_text: 'y = 4' }] }, { path: 'src/a.py', new_content: 'z' }] });
   assert(bad.startsWith('ERROR') && read('src', 'a.py') === 'x = 1\ny = 3\n', 'invalid change set applies nothing');
 
-  mock.answers.warn = (msg, items) => (items.includes('Annulla le modifiche') ? 'Annulla le modifiche' : undefined);
+  mock.answers.warn = (msg, items) => (items.includes('Undo changes') ? 'Undo changes' : undefined);
   await panel({ type: 'revert', id: cp1.id });
   assert(read('src', 'a.py') === 'x = 1\ny = 2\n' && !fs.existsSync(file('src', 'new.py')) && read('README.md').includes('Note del progetto'), 'undo restores every file');
   assert(st().checkpoints.find((c) => c.id === cp1.id).reverted, 'restore point marked as undone');
@@ -132,7 +136,7 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   cursor = cursorOf(f4);
 
   // ---------- commands, terminal, memory ----------
-  mock.answers.warn = (msg, items) => (items.includes('Esegui') ? 'Esegui' : undefined);
+  mock.answers.warn = (msg, items) => (items.includes('Run') ? 'Run' : undefined);
   const rc = await tool('run_command', { window: win, command: 'echo ciao' });
   assert(rc.includes('exit code: 0') && rc.includes('ciao'), 'run_command after approval');
   async function* stream() { yield '\x1b[32mPASS\x1b[0m test_a\r\n'; yield 'progress 10%\rprogress 100%\n'; }
@@ -143,11 +147,11 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   const term = await tool('get_terminal_output', { window: win });
   assert(term.includes('$ npm test') && term.includes('PASS test_a') && term.includes('progress 100%') && !term.includes('progress 10%') && !term.includes('\x1b') && term.includes('exit code 0'), 'terminal output captured and cleaned');
   const sm = await tool('save_memory', { window: win, content: '# Memoria\n- i test: pytest' });
-  assert(sm.includes('Saved') && read('.claude-bridge', 'MEMORY.md').includes('pytest'), 'memory saved in the project');
+  assert(sm.includes('Saved') && read('.ai-bridge', 'MEMORY.md').includes('pytest'), 'memory saved in the project');
 
   // ---------- quick fix, commit message, file from the computer ----------
   const actions = mock.providers.codeActions.provideCodeActions(await mock.vscode.workspace.openTextDocument(Uri.file(file('src', 'a.py'))), null, { diagnostics: [{ severity: 0, message: 'undefined name z', source: 'pyflakes', range: { start: { line: 1, character: 4 }, end: { line: 1, character: 5 } } }] });
-  assert(actions.length === 1 && actions[0].command.command === 'claudeBridge.fixDiagnostic', 'lightbulb offers the fix');
+  assert(actions.length === 1 && actions[0].command.command === 'aiBridge.fixDiagnostic', 'lightbulb offers the fix');
   const kP = tool('follow_vscode', { cursor, window: win });
   await mock.vscode.commands.executeCommand(actions[0].command.command, ...actions[0].command.arguments);
   const k = await kP;
@@ -159,7 +163,7 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   fs.writeFileSync(file('src', 'a.py'), 'x = 1\ny = 6\n');
   git('git add src/a.py');
   const cP = tool('follow_vscode', { cursor, window: win });
-  await mock.vscode.commands.executeCommand('claudeBridge.commitMessage');
+  await mock.vscode.commands.executeCommand('aiBridge.commitMessage');
   const c = await cP;
   assert(c.includes('COMMIT MESSAGE') && c.includes('+y = 6') && c.includes('Primo commit'), 'commit request carries the staged diff and recent commits');
   cursor = cursorOf(c);
@@ -176,6 +180,53 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   assert(d.includes('appunti.txt') && d.includes('idea: cache') && d.includes('not in the workspace'), 'dropped file reaches Claude');
   cursor = cursorOf(d);
 
+  // ---------- organize a folder outside the project ----------
+  const rqD = msgs().find((m) => m.role === 'user' && m.text === 'usa gli appunti').requestId;
+  const dl = path.join(home, 'Downloads');
+  fs.mkdirSync(dl);
+  for (const [n, c] of [['report.pdf', '%PDF'], ['photo.jpg', 'JPG'], ['setup.exe', 'MZ'], ['old.zip', 'PK'], ['notes.txt', 'hi']]) fs.writeFileSync(path.join(dl, n), c);
+  const dlp = (...p) => path.join(dl, ...p);
+  const ld = await tool('list_dir', { window: win, path: '~/Downloads' });
+  assert(ld.includes(dl) && ld.includes('[file] report.pdf') && /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(ld), 'list_dir shows a folder outside the project, with dates');
+  const ops1 = await tool('propose_file_ops', {
+    window: win, request_id: rqD, description: 'riordina Download',
+    operations: [
+      { op: 'mkdir', path: '~/Downloads/Documents' },
+      { op: 'move', path: '~/Downloads/report.pdf', to: '~/Downloads/Documents/report.pdf' },
+      { op: 'move', path: '~/Downloads/photo.jpg', to: '~/Downloads/Images/2026/photo.jpg' },
+      { op: 'rename', path: '~/Downloads/notes.txt', to: '~/Downloads/note.txt' },
+      { op: 'trash', path: '~/Downloads/old.zip' },
+    ],
+  });
+  assert(ops1.includes('Shown to the user') && ops1.includes('2 moves') && ops1.includes('1 rename') && ops1.includes('1 new folder') && ops1.includes('Recycle Bin'), 'file operations proposed, with a summary');
+  assert(fs.existsSync(dlp('report.pdf')), 'nothing moves before accepting');
+  const fcard = await until(() => msgs().find((m) => m.role === 'fileops' && m.state === 'pending'), 'file operations card');
+  assert(fcard.items.length === 5 && fcard.items[1].a === '~/Downloads/report.pdf', 'card lists the operations with short paths');
+  await panel({ type: 'showOps', id: fcard.opsId });
+  assert(mock.log.untitled.some((t) => t.includes('report.pdf') && t.includes('Recycle Bin')), '"show all" opens the full list');
+  await panel({ type: 'acceptOps', id: fcard.opsId });
+  assert(fs.existsSync(dlp('Documents', 'report.pdf')) && fs.existsSync(dlp('Images', '2026', 'photo.jpg')) && fs.existsSync(dlp('note.txt')) && !fs.existsSync(dlp('old.zip')) && mock.log.trashed.some((x) => x.endsWith('old.zip')), 'operations done, old.zip in the Recycle Bin');
+  const fo = await tool('follow_vscode', { cursor, window: win });
+  assert(fo.includes('file operations') && fo.includes('ACCEPTED'), 'the AI gets the outcome');
+  cursor = cursorOf(fo);
+  const clash = await tool('propose_file_ops', { window: win, description: 'x', operations: [{ op: 'move', path: '~/Downloads/setup.exe', to: '~/Downloads/x.exe' }, { op: 'move', path: '~/Downloads/note.txt', to: '~/Downloads/Documents/report.pdf' }] });
+  assert(clash.startsWith('ERROR') && clash.includes('already exists') && fs.existsSync(dlp('setup.exe')), 'a clash stops everything before anything moves');
+  assert((await tool('propose_file_ops', { window: win, description: 'x', operations: [{ op: 'trash', path: '/usr/bin' }] })).includes('system folder'), 'system folders are refused');
+  assert((await tool('propose_file_ops', { window: win, description: 'x', operations: [{ op: 'trash', path: '~' }] })).includes('refusing'), 'the home folder itself is refused');
+  const fcp = st().checkpoints.find((c) => c.id === msgs().find((m) => m.opsId === fcard.opsId).cpId);
+  assert(fcp && fcp.ops >= 5 && fcp.requestId === rqD, 'restore point counts the operations');
+  mock.answers.warn = (msg, items) => (items.includes('Undo changes') ? 'Undo changes' : undefined);
+  await panel({ type: 'revert', id: fcp.id });
+  assert(fs.existsSync(dlp('report.pdf')) && fs.existsSync(dlp('photo.jpg')) && fs.existsSync(dlp('notes.txt')) && !fs.existsSync(dlp('Documents')) && !fs.existsSync(dlp('Images')), 'undo moves everything back and removes the new folders');
+  assert(!fs.existsSync(dlp('old.zip')) && mock.log.info.some((t) => t.includes('Recycle Bin')), 'the Recycle Bin item stays there, and the user is told');
+  const fu = await tool('follow_vscode', { cursor, window: win });
+  assert(fu.includes('UNDID') && fu.includes('Recycle Bin'), 'the AI learns about the undo');
+  cursor = cursorOf(fu);
+  await panel({ type: 'agent', on: true });
+  const ag = await tool('propose_file_ops', { window: win, request_id: rqD, description: 'installers', operations: [{ op: 'move', path: '~/Downloads/setup.exe', to: '~/Downloads/Installers/setup.exe' }] });
+  assert(ag.includes('Done at once') && fs.existsSync(dlp('Installers', 'setup.exe')), 'agent mode does it at once');
+  await panel({ type: 'agent', on: false });
+
   // ---------- handoff to a new chat, history, link ----------
   const hP = tool('follow_vscode', { cursor, window: win });
   await panel({ type: 'handoff' });
@@ -183,7 +234,7 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   assert(h.includes('HANDOFF'), 'handoff request reaches the chat');
   const sh = await tool('save_handoff', { window: win, summary: 'Obiettivo: cache. Fatto: y=6.' });
   assert(sh.includes('do NOT call follow_vscode'), 'save_handoff answer');
-  assert(read('.claude-bridge', 'HANDOFF.md').includes('Obiettivo: cache'), 'handoff written in the project');
+  assert(read('.ai-bridge', 'HANDOFF.md').includes('Obiettivo: cache'), 'handoff written in the project');
   await until(() => st().history.length === 1 && msgs().length === 1, 'old conversation archived');
   assert(mock.clipboard.text.includes('follow_vscode'), 'prompt for the new chat in the clipboard');
   const n1 = await tool('follow_vscode', { window: win });
@@ -202,7 +253,7 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   await panel({ type: 'openChat', id: sid });
   assert(mock.log.opened.includes('https://claude.ai/chat/abc'), 'chat opens in the browser');
   await panel({ type: 'resumeSession', id: sid });
-  assert(read('.claude-bridge', 'HANDOFF.md').includes('Spiega il progetto'), 'resume writes a summary of that conversation');
+  assert(read('.ai-bridge', 'HANDOFF.md').includes('Spiega il progetto'), 'resume writes a summary of that conversation');
   await panel({ type: 'closeHistory' });
   assert(st().mode === 'chat', 'back to the chat');
 

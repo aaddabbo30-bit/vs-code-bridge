@@ -1,12 +1,13 @@
-# Claude Bridge
+# AI Bridge
 
-Pannello chat di Claude dentro VS Code. Le risposte arrivano da una chat di claude.ai collegata al connector "VS Code Bridge": premi *Copia prompt* nel pannello e incollalo in una chat (nuova o già esistente).
+An AI chat panel inside VS Code. The answers come from a web AI chat connected to the "VS Code Bridge" connector: press *Copy prompt* in the panel and paste it into a chat (new or existing).
 
-- `Ctrl+Alt+C` — chiedi a Claude (con la selezione)
-- `Ctrl+Alt+E` — modifica la selezione con Claude (arriva un diff da accettare)
-- Trascina file nel pannello (Shift se VS Code li apre invece di allegarli) o tasto destro → *Allega a Claude*
-- *Agente* — Claude applica le modifiche da solo; *Annulla le modifiche* le toglie tutte per quella richiesta
-- Lampadina sugli errori → *Chiedi a Claude di sistemarlo*
-- ✨ nel pannello Git → messaggio di commit scritto da Claude
-- Intestazione del pannello: cronologia, link alla chat di claude.ai, nuova chat con riassunto, memoria di progetto, nuova conversazione, configurazione
-- Comando "Claude Bridge: Configura" — URL del server e token
+- `Ctrl+Alt+C` — ask the AI (with the selection)
+- `Ctrl+Alt+E` — edit the selection with the AI (you get a diff to accept)
+- Drop files into the panel (hold Shift if VS Code opens them instead), or right click → *Attach for the AI*
+- *Agent* — the AI applies changes on its own; *Undo changes* removes everything it did for that request
+- Organize folders anywhere on your computer (e.g. Downloads): the AI proposes create / move / rename / Recycle Bin operations, you accept them, and you can undo them
+- Light bulb on problems → *Ask the AI to fix it*
+- ✨ in the Git panel → commit message written by the AI
+- Panel header: history, link to the AI chat, new chat with a summary, project memory, new conversation, settings
+- Command "AI Bridge: Configure" — server URL and token

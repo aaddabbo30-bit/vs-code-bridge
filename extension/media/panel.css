@@ -1,4 +1,4 @@
-/* Claude Bridge panel — every color comes from the VS Code theme, so it follows light, dark and high-contrast themes. */
+/* AI Bridge panel — every color comes from the VS Code theme, so it follows light, dark and high-contrast themes. */
 :root {
   --bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
   --fg: var(--vscode-foreground);
@@ -155,3 +155,9 @@ button.send:disabled { opacity: .45; cursor: default; }
 #drop .codicon { font-size: 28px; }
 #drop small { color: var(--muted); font-size: 11px; }
 body.dragging #drop { display: flex; }
+/* file operations */
+.muted { color: var(--muted); }
+.card .desc.muted { color: var(--muted); }
+.card .desc.err { color: var(--err); }
+ul.files.ops li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.small-link { font-size: 11px; margin-top: 4px; }

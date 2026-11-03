@@ -49,15 +49,17 @@ function globRe(glob) {
   }
   return new RegExp('^' + re + '$');
 }
-const SKIP = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', 'dist', 'build', 'out', '.storage']);
+const SKIP = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', 'dist', 'build', 'out', '.storage', '.trash-bin']);
 
 function create(root) {
   const docs = [];
   const diagnostics = new Map(); // fsPath -> [diagnostic]
   const commands = new Map();
   const providers = {};
-  const config = { serverUrl: '', windowName: '', autoApproveCommands: ['git status'], idleMinutes: 20 };
-  const log = { info: [], warn: [], error: [], executed: [], shown: [], status: [], opened: [] };
+  const config = { aiBridge: {}, claudeBridge: {} }; // settings by section
+  const defaults = { serverUrl: '', windowName: '', autoApproveCommands: ['git status'], idleMinutes: 20 };
+  const log = { info: [], warn: [], error: [], executed: [], shown: [], status: [], opened: [], trashed: [], untitled: [] };
+  const trashDir = path.join(root, '.trash-bin');
   const answers = { info: () => undefined, warn: () => undefined, input: () => undefined, pick: () => undefined, open: () => undefined };
   const listeners = { termStart: [], termEnd: [] };
   const clipboard = { text: '' };
@@ -76,10 +78,18 @@ function create(root) {
       name: path.basename(root),
       workspaceFolders: [{ uri: root$, name: path.basename(root), index: 0 }],
       get textDocuments() { return docs; },
-      getConfiguration: () => ({ get: (k, d) => (config[k] !== undefined ? config[k] : d), update: async (k, v) => { config[k] = v; } }),
+      getConfiguration: (section) => {
+        const sec = (config[section] = config[section] || {});
+        return {
+          get: (k, d) => (sec[k] !== undefined ? sec[k] : defaults[k] !== undefined ? defaults[k] : d),
+          update: async (k, v) => { sec[k] = v; },
+          inspect: (k) => ({ key: section + '.' + k, defaultValue: defaults[k], globalValue: sec[k] }),
+        };
+      },
       registerTextDocumentContentProvider: (scheme, p) => { providers[scheme] = p; return { dispose() {} }; },
       asRelativePath: (u) => path.relative(root, u.fsPath).split(path.sep).join('/'),
       async openTextDocument(uri) {
+        if (uri && !(uri instanceof Uri) && typeof uri.content === 'string') { const d = new Doc(new Uri('untitled', '/Untitled-' + (docs.length + 1)), uri.content); docs.push(d); log.untitled.push(uri.content); return d; }
         let d = findDoc(uri);
         if (!d) { d = new Doc(uri, fs.readFileSync(uri.fsPath, 'utf8')); docs.push(d); }
         return d;
@@ -115,9 +125,19 @@ function create(root) {
           const d = findDoc(uri);
           if (d && !d.isDirty) d._text = Buffer.from(bytes).toString('utf8');
         },
-        async stat(uri) { const s = statOf(uri.fsPath); return { type: s.isDirectory() ? 2 : 1, size: s.size }; },
+        async stat(uri) { const s = statOf(uri.fsPath); return { type: s.isDirectory() ? 2 : 1, size: s.size, mtime: s.mtimeMs, ctime: s.ctimeMs }; },
+        async readDirectory(uri) { return fs.readdirSync(uri.fsPath, { withFileTypes: true }).map((e) => [e.name, e.isDirectory() ? 2 : 1]); },
         async createDirectory(uri) { fs.mkdirSync(uri.fsPath, { recursive: true }); },
-        async delete(uri) { statOf(uri.fsPath); fs.rmSync(uri.fsPath, { recursive: true, force: true }); },
+        async rename(src, dst, o = {}) {
+          statOf(src.fsPath);
+          if (!o.overwrite && fs.existsSync(dst.fsPath)) { const e = new Error('FileExists: ' + dst.fsPath); e.code = 'FileExists'; throw e; }
+          fs.renameSync(src.fsPath, dst.fsPath);
+        },
+        async delete(uri, o = {}) {
+          statOf(uri.fsPath);
+          if (o.useTrash) { const bin = path.join(trashDir, Date.now() + '-' + path.basename(uri.fsPath)); fs.mkdirSync(trashDir, { recursive: true }); fs.renameSync(uri.fsPath, bin); log.trashed.push(uri.fsPath); return; }
+          fs.rmSync(uri.fsPath, { recursive: !!o.recursive || true, force: true });
+        },
       },
     },
     window: {

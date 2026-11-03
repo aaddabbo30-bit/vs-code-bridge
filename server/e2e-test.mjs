@@ -46,8 +46,8 @@ const notif = await fetch(`${B}/mcp/${T}`, { method: 'POST', headers: { 'content
 assert(notif.status === 202, 'notification -> 202');
 const tl = await mcp('tools/list', {});
 const names = tl.result.tools.map((t) => t.name);
-assert(names.length === 17, 'tools/list has 17 tools');
-for (const n of ['follow_vscode', 'propose_changes', 'update_plan', 'save_memory', 'save_handoff', 'get_terminal_output', 'list_vscode_windows']) assert(names.includes(n), 'tool ' + n);
+assert(names.length === 19, 'tools/list has 19 tools');
+for (const n of ['follow_vscode', 'list_dir', 'propose_file_ops', 'propose_changes', 'update_plan', 'save_memory', 'save_handoff', 'get_terminal_output', 'list_vscode_windows']) assert(names.includes(n), 'tool ' + n);
 assert(tl.result.tools.find((t) => t.name === 'read_file').inputSchema.properties.window, 'tools take a window');
 assert((await mcp('tools/list', {}, 'wrong')).status === 404, 'wrong token on MCP -> 404');
 assert((await fetch(B + '/api/poll', { headers: { authorization: 'Bearer nope' } })).status === 401, 'wrong token on API -> 401');
@@ -62,6 +62,8 @@ const w1 = windowClient('w1', 'proj · PC1', {
   save_memory: (p) => ({ ok: true, result: `Saved .claude-bridge/MEMORY.md (${p.content.length} characters).` }),
   save_handoff: () => ({ ok: true, result: 'Handoff saved in .claude-bridge/HANDOFF.md.' }),
   terminal_output: () => ({ ok: true, result: '$ npm test\n(terminal "pwsh", exit code 1)\nFAIL x' }),
+  list_dir: (p) => ({ ok: true, result: `${p.path} — 2 entries\n[file] a.pdf  1.0 KB  2026-11-01 10:00` }),
+  propose_file_ops: (p) => ({ ok: true, result: `Shown to the user for review (f1: ${p.operations.length} moves).` }),
 });
 const p0 = await w1.api('GET', '/api/poll?wait=0');
 assert(p0.j.claudeListening === false && p0.j.window === 'w1', 'not listening at start; window id echoed');
@@ -92,6 +94,8 @@ assert((await tool('get_editor_context', {})).includes('Active file: src/a.py'),
 assert((await tool('propose_edit', { path: 'src/a.py', description: 'x', edits: [{ old_text: 'zzz', new_text: 'q' }] })).startsWith('ERROR') , 'tool error propagated as isError');
 assert((await tool('save_memory', { content: '- usa pydantic' })).includes('Saved'), 'save_memory round trip');
 assert((await tool('get_terminal_output', {})).includes('npm test'), 'get_terminal_output round trip');
+assert((await tool('list_dir', { path: '~/Downloads' })).includes('a.pdf'), 'list_dir round trip');
+assert((await tool('propose_file_ops', { description: 'x', operations: [{ op: 'move', path: 'a', to: 'b' }] })).includes('1 moves'), 'propose_file_ops round trip');
 
 // reply via follow, then an event comes back
 const f2P = tool('follow_vscode', { cursor, reply: { request_id: rq.seq, text: 'Fatto: **validazione** aggiunta.' } });
@@ -103,9 +107,12 @@ assert(f2.includes('ACCEPTED') && f2.includes('Problems VS Code'), 'edit result 
 assert(!f2.includes('Project memory'), 'memory only on the first round');
 cursor = cursorOf(f2);
 await w1.api('POST', '/api/event', { event: 'revert', data: { request_id: rq.seq, paths: ['a.py', 'b.py'] } });
+await w1.api('POST', '/api/event', { event: 'ops_result', data: { ops_id: 'f1', summary: '2 moves', accepted: true } });
 const f2b = await tool('follow_vscode', { cursor });
-assert(f2b.includes('UNDID') && f2b.includes('a.py, b.py'), 'revert event delivered');
-cursor = cursorOf(f2b);
+const f2c = f2b.includes('ACCEPTED and done') ? f2b : f2b + await tool('follow_vscode', { cursor: cursorOf(f2b) });
+assert(f2c.includes('UNDID') && f2c.includes('a.py, b.py'), 'revert event delivered');
+assert(f2c.includes('file operations f1 (2 moves) were ACCEPTED and done'), 'file operations event delivered');
+cursor = cursorOf(f2c.slice(f2c.lastIndexOf('cursor: ')));
 
 // ---------- window 2 ----------
 const w2 = windowClient('w2', 'altro · PC2', { read_file: () => ({ ok: true, result: 'from w2' }) });

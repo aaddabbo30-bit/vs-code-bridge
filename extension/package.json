@@ -1,8 +1,8 @@
 {
   "name": "claude-bridge",
-  "displayName": "Claude Bridge",
-  "description": "Usa Claude (claude.ai) dentro VS Code tramite il tuo server VS Code Bridge, senza API.",
-  "version": "0.2.0",
+  "displayName": "AI Bridge",
+  "description": "Use your AI chat inside VS Code through your own VS Code Bridge server — no API keys.",
+  "version": "0.3.0",
   "publisher": "ale-local",
   "license": "MIT",
   "engines": { "vscode": "^1.80.0" },
@@ -11,74 +11,74 @@
   "activationEvents": ["onStartupFinished"],
   "contributes": {
     "viewsContainers": {
-      "activitybar": [{ "id": "claudeBridge", "title": "Claude", "icon": "media/icon.svg" }]
+      "activitybar": [{ "id": "aiBridge", "title": "AI", "icon": "media/icon.svg" }]
     },
     "views": {
-      "claudeBridge": [{ "type": "webview", "id": "claudeBridge.chat", "name": "Chat" }]
+      "aiBridge": [{ "type": "webview", "id": "aiBridge.chat", "name": "Chat" }]
     },
     "commands": [
-      { "command": "claudeBridge.configure", "title": "Configura (URL e token)", "category": "Claude Bridge" },
-      { "command": "claudeBridge.ask", "title": "Chiedi a Claude", "category": "Claude Bridge" },
-      { "command": "claudeBridge.editSelection", "title": "Modifica selezione con Claude", "category": "Claude Bridge" },
-      { "command": "claudeBridge.attach", "title": "Allega a Claude", "category": "Claude Bridge", "icon": "$(new-file)" },
-      { "command": "claudeBridge.toggleAgent", "title": "Attiva/disattiva la modalità agente", "category": "Claude Bridge" },
-      { "command": "claudeBridge.undoLast", "title": "Annulla le modifiche di Claude dell'ultima richiesta", "category": "Claude Bridge" },
-      { "command": "claudeBridge.commitMessage", "title": "Scrivi il messaggio di commit con Claude", "category": "Claude Bridge", "icon": "$(sparkle)" },
-      { "command": "claudeBridge.fixDiagnostic", "title": "Chiedi a Claude di sistemare il problema", "category": "Claude Bridge" },
-      { "command": "claudeBridge.handoff", "title": "Passa a una nuova chat di claude.ai", "category": "Claude Bridge" },
-      { "command": "claudeBridge.openMemory", "title": "Apri la memoria di progetto", "category": "Claude Bridge" },
-      { "command": "claudeBridge.history", "title": "Conversazioni passate", "category": "Claude Bridge" },
-      { "command": "claudeBridge.linkChat", "title": "Collega la conversazione alla chat di claude.ai", "category": "Claude Bridge" },
-      { "command": "claudeBridge.stop", "title": "Ferma l'ascolto di Claude", "category": "Claude Bridge" },
-      { "command": "claudeBridge.clear", "title": "Nuova conversazione (archivia quella attuale)", "category": "Claude Bridge" },
-      { "command": "claudeBridge.copyPrompt", "title": "Copia il prompt per claude.ai", "category": "Claude Bridge" }
+      { "command": "aiBridge.configure", "title": "Configure (URL and token)", "category": "AI Bridge" },
+      { "command": "aiBridge.ask", "title": "Ask AI", "category": "AI Bridge" },
+      { "command": "aiBridge.editSelection", "title": "Edit selection with AI", "category": "AI Bridge" },
+      { "command": "aiBridge.attach", "title": "Attach for the AI", "category": "AI Bridge", "icon": "$(new-file)" },
+      { "command": "aiBridge.toggleAgent", "title": "Turn agent mode on/off", "category": "AI Bridge" },
+      { "command": "aiBridge.undoLast", "title": "Undo the AI's changes for the last request", "category": "AI Bridge" },
+      { "command": "aiBridge.commitMessage", "title": "Write the commit message with AI", "category": "AI Bridge", "icon": "$(sparkle)" },
+      { "command": "aiBridge.fixDiagnostic", "title": "Ask the AI to fix the problem", "category": "AI Bridge" },
+      { "command": "aiBridge.handoff", "title": "Move to a new AI chat", "category": "AI Bridge" },
+      { "command": "aiBridge.openMemory", "title": "Open the project memory", "category": "AI Bridge" },
+      { "command": "aiBridge.history", "title": "Past conversations", "category": "AI Bridge" },
+      { "command": "aiBridge.linkChat", "title": "Link the conversation to its AI chat", "category": "AI Bridge" },
+      { "command": "aiBridge.stop", "title": "Stop the AI listening", "category": "AI Bridge" },
+      { "command": "aiBridge.clear", "title": "New conversation (archive the current one)", "category": "AI Bridge" },
+      { "command": "aiBridge.copyPrompt", "title": "Copy the prompt for the AI chat", "category": "AI Bridge" }
     ],
     "keybindings": [
-      { "command": "claudeBridge.ask", "key": "ctrl+alt+c", "mac": "cmd+alt+c" },
-      { "command": "claudeBridge.editSelection", "key": "ctrl+alt+e", "mac": "cmd+alt+e", "when": "editorTextFocus" }
+      { "command": "aiBridge.ask", "key": "ctrl+alt+c", "mac": "cmd+alt+c" },
+      { "command": "aiBridge.editSelection", "key": "ctrl+alt+e", "mac": "cmd+alt+e", "when": "editorTextFocus" }
     ],
     "menus": {
       "editor/context": [
-        { "command": "claudeBridge.ask", "group": "claude@1" },
-        { "command": "claudeBridge.editSelection", "group": "claude@2", "when": "editorHasSelection" },
-        { "command": "claudeBridge.attach", "group": "claude@3" }
+        { "command": "aiBridge.ask", "group": "aibridge@1" },
+        { "command": "aiBridge.editSelection", "group": "aibridge@2", "when": "editorHasSelection" },
+        { "command": "aiBridge.attach", "group": "aibridge@3" }
       ],
       "explorer/context": [
-        { "command": "claudeBridge.attach", "group": "claude@1" }
+        { "command": "aiBridge.attach", "group": "aibridge@1" }
       ],
       "editor/title/context": [
-        { "command": "claudeBridge.attach", "group": "claude@1" }
+        { "command": "aiBridge.attach", "group": "aibridge@1" }
       ],
       "scm/title": [
-        { "command": "claudeBridge.commitMessage", "group": "navigation", "when": "scmProvider == git" }
+        { "command": "aiBridge.commitMessage", "group": "navigation", "when": "scmProvider == git" }
       ],
       "commandPalette": [
-        { "command": "claudeBridge.fixDiagnostic", "when": "false" }
+        { "command": "aiBridge.fixDiagnostic", "when": "false" }
       ]
     },
     "configuration": {
-      "title": "Claude Bridge",
+      "title": "AI Bridge",
       "properties": {
-        "claudeBridge.serverUrl": {
+        "aiBridge.serverUrl": {
           "type": "string",
           "default": "https://vscode-bridge.a-addabbo30.workers.dev",
-          "description": "Indirizzo del tuo server VS Code Bridge (Cloudflare Worker)."
+          "description": "Address of your VS Code Bridge server (Cloudflare Worker)."
         },
-        "claudeBridge.windowName": {
+        "aiBridge.windowName": {
           "type": "string",
           "default": "",
-          "description": "Nome di questa finestra quando ne colleghi più di una (vuoto = nome della cartella · nome del computer)."
+          "description": "Name of this window when you connect more than one (empty = folder name · computer name)."
         },
-        "claudeBridge.autoApproveCommands": {
+        "aiBridge.autoApproveCommands": {
           "type": "array",
           "items": { "type": "string" },
           "default": ["git status", "git diff", "git log", "git branch", "git show"],
-          "description": "Comandi che Claude può eseguire senza chiedere (prefissi esatti, senza &&, |, ; ecc.). Tutti gli altri chiedono conferma."
+          "description": "Commands the AI may run without asking (exact prefixes, no &&, |, ; etc.). Every other command asks for confirmation."
         },
-        "claudeBridge.idleMinutes": {
+        "aiBridge.idleMinutes": {
           "type": "number",
           "default": 20,
-          "description": "Dopo questi minuti senza attività e senza Claude in ascolto, l'estensione controlla il server ogni 15 s invece di restare collegata."
+          "description": "After this many minutes with no activity and no AI listening, the extension checks the server every 15 s instead of staying connected."
         }
       }
     }
