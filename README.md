@@ -9,7 +9,10 @@ VS Code (estensione Claude Bridge) ──HTTPS──▶ Cloudflare Worker (quest
 - `server/` — Cloudflare Worker + Durable Object. `/mcp/<TOKEN>` è il server MCP da aggiungere in claude.ai come custom connector; `/api/*` è usato dall'estensione (header `Authorization: Bearer <TOKEN>`).
 - `extension/` — estensione VS Code: pannello chat, Ctrl+Alt+C (domanda), Ctrl+Alt+E (modifica selezione), diff Accetta/Rifiuta, comandi con approvazione.
 
-## Deploy del server (una volta, da un computer dove Node può eseguire programmi)
+## Deploy del server
+Automatico: il repo è collegato a Cloudflare Workers Builds (root directory `server`), quindi ogni push su `main` pubblica il worker `vscode-bridge`. Il secret `BRIDGE_TOKEN` è impostato nel dashboard del worker (Settings → Variables and Secrets).
+
+Deploy manuale (da un computer dove Node può eseguire programmi):
 ```
 cd server
 npm install
@@ -23,6 +26,7 @@ Controllo: `https://<nome>.<subdominio>.workers.dev/health` → "VS Code Bridge:
 Custom connector, nome `VS Code Bridge`, URL `https://<worker>/mcp/<TOKEN>`.
 
 ## Estensione
+Pacchetto pronto: [`dist/claude-bridge.vsix`](dist/claude-bridge.vsix). Per ricrearlo:
 ```
 cd extension
 npx @vscode/vsce package --allow-missing-repository --skip-license -o claude-bridge.vsix
