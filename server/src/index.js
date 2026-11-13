@@ -13,6 +13,7 @@ const CTX_MAX_CHARS = 900000;
 const SERVER_INSTRUCTIONS = `VS Code Bridge connects this chat to the user's VS Code. The user works only in VS Code: they send requests from the AI panel there and read your answers there, not in this chat.
 When the user asks you to follow VS Code («segui VS Code», «follow VS Code»), call follow_vscode in a loop and do what each round says. If they name a window (window "id"), pass that window to follow_vscode and to every other tool. Answer each request by passing reply={request_id, text} in the next follow_vscode call (or with the reply tool).
 Look at the code with read_file, search, list_files, get_diagnostics, get_editor_context, get_terminal_output. Change files with propose_edit (one file) or propose_changes (several files as one change set): normally the user reviews the diff and accepts or rejects it; in AGENT MODE (the request says so) changes are applied at once and the user can undo the whole request. Show your steps for longer tasks with update_plan. run_command always asks the user (except read-only git).
+To show the user a report, table, chart, diagram or small app, open it in the middle of VS Code with show_artifact (self-contained HTML, markdown or SVG; no network access).
 To organize files and folders anywhere on the computer (e.g. Downloads), look with list_dir and propose create/move/rename/Recycle Bin operations with propose_file_ops: the user reviews them (or, in agent mode, they are applied at once) and can undo them.
 The first round of a chat gives you the project memory (.ai-bridge/MEMORY.md) and, after a change of chat, the handoff from the previous chat: keep the memory useful with save_memory.
 Don't write in this chat while following, except one line when you stop.
@@ -343,6 +344,7 @@ export class Bridge {
       case 'get_diagnostics': return this.extTool(a, 'get_diagnostics', { path: a.path });
       case 'list_dir': return this.extTool(a, 'list_dir', { path: a.path, recursive: !!a.recursive, max: a.max });
       case 'propose_file_ops': return this.extTool(a, 'propose_file_ops', { operations: a.operations, description: a.description, request_id: a.request_id });
+      case 'show_artifact': return this.extTool(a, 'show_artifact', { id: a.id, title: a.title, kind: a.kind, content: a.content });
       case 'get_terminal_output': return this.extTool(a, 'terminal_output', { count: a.count, terminal: a.terminal });
       case 'propose_edit': return this.extTool(a, 'propose_edit', { path: a.path, edits: a.edits, new_content: a.new_content, description: a.description, request_id: a.request_id });
       case 'propose_changes': return this.extTool(a, 'propose_changes', { files: a.files, description: a.description, request_id: a.request_id });
@@ -767,8 +769,22 @@ const TOOLS = [
     }),
   },
   {
+    name: 'show_artifact',
+    description: 'Show a document, report, table, chart, diagram or small interactive page in the middle of VS Code, in an editor tab (like an artifact), instead of a long chat answer. kind "html": a whole page or a fragment, with inline CSS and JavaScript (inline SVG, canvas and data: URLs work, but there is NO network access: no external scripts, fonts, images or fetch); VS Code theme colors are available as CSS variables such as var(--vscode-foreground). kind "markdown": rendered markdown. kind "svg": one SVG image. Call it again with the same id to update the tab in place. The user can reopen it or save it as a file from the panel.',
+    inputSchema: withWindow({
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Tab title.' },
+        kind: { type: 'string', enum: ['html', 'markdown', 'svg'] },
+        content: { type: 'string', description: 'The whole content (max 2 MB).' },
+        id: { type: 'string', description: 'Reuse the id from an earlier call to update that artifact.' },
+      },
+      required: ['title', 'kind', 'content'],
+    }),
+  },
+  {
     name: 'run_command',
-    description: 'Run a shell command in the user\'s VS Code workspace (cmd.exe on Windows, sh on macOS/Linux) and get exit code, stdout and stderr. Read-only git commands run at once; anything else asks the user to approve it in VS Code first. If it takes more than 25 s you get a job_id for get_result.',
+    description: 'Run a shell command in the user\'s VS Code workspace (cmd.exe on Windows, sh on macOS/Linux) and get exit code, stdout and stderr. Read-only commands (listing folders, reading files, searching, git status/log/diff, version checks) run at once; anything else asks the user in VS Code first (they may allow it once or always). If it takes more than 25 s you get a job_id for get_result.',
     inputSchema: withWindow({
       type: 'object',
       properties: {

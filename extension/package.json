@@ -2,58 +2,210 @@
   "name": "claude-bridge",
   "displayName": "AI Bridge",
   "description": "Use your AI chat inside VS Code through your own VS Code Bridge server — no API keys.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "ale-local",
   "license": "MIT",
-  "engines": { "vscode": "^1.80.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "main": "./extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
-      "activitybar": [{ "id": "aiBridge", "title": "AI", "icon": "media/icon.svg" }]
+      "activitybar": [
+        {
+          "id": "aiBridge",
+          "title": "AI",
+          "icon": "media/icon.svg"
+        }
+      ]
     },
     "views": {
-      "aiBridge": [{ "type": "webview", "id": "aiBridge.chat", "name": "Chat" }]
+      "aiBridge": [
+        {
+          "type": "webview",
+          "id": "aiBridge.chat",
+          "name": "Chat"
+        },
+        {
+          "id": "aiBridge.attachments",
+          "name": "Attachments",
+          "icon": "media/icon.svg"
+        }
+      ]
     },
     "commands": [
-      { "command": "aiBridge.configure", "title": "Configure (URL and token)", "category": "AI Bridge" },
-      { "command": "aiBridge.ask", "title": "Ask AI", "category": "AI Bridge" },
-      { "command": "aiBridge.editSelection", "title": "Edit selection with AI", "category": "AI Bridge" },
-      { "command": "aiBridge.attach", "title": "Attach for the AI", "category": "AI Bridge", "icon": "$(new-file)" },
-      { "command": "aiBridge.toggleAgent", "title": "Turn agent mode on/off", "category": "AI Bridge" },
-      { "command": "aiBridge.undoLast", "title": "Undo the AI's changes for the last request", "category": "AI Bridge" },
-      { "command": "aiBridge.commitMessage", "title": "Write the commit message with AI", "category": "AI Bridge", "icon": "$(sparkle)" },
-      { "command": "aiBridge.fixDiagnostic", "title": "Ask the AI to fix the problem", "category": "AI Bridge" },
-      { "command": "aiBridge.handoff", "title": "Move to a new AI chat", "category": "AI Bridge" },
-      { "command": "aiBridge.openMemory", "title": "Open the project memory", "category": "AI Bridge" },
-      { "command": "aiBridge.history", "title": "Past conversations", "category": "AI Bridge" },
-      { "command": "aiBridge.linkChat", "title": "Link the conversation to its AI chat", "category": "AI Bridge" },
-      { "command": "aiBridge.stop", "title": "Stop the AI listening", "category": "AI Bridge" },
-      { "command": "aiBridge.clear", "title": "New conversation (archive the current one)", "category": "AI Bridge" },
-      { "command": "aiBridge.copyPrompt", "title": "Copy the prompt for the AI chat", "category": "AI Bridge" }
+      {
+        "command": "aiBridge.configure",
+        "title": "Configure (URL and token)",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.ask",
+        "title": "Ask AI",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.editSelection",
+        "title": "Edit selection with AI",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.attach",
+        "title": "Attach for the AI",
+        "category": "AI Bridge",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "aiBridge.toggleAgent",
+        "title": "Turn agent mode on/off",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.undoLast",
+        "title": "Undo the AI's changes for the last request",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.commitMessage",
+        "title": "Write the commit message with AI",
+        "category": "AI Bridge",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "aiBridge.fixDiagnostic",
+        "title": "Ask the AI to fix the problem",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.handoff",
+        "title": "Move to a new AI chat",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.openMemory",
+        "title": "Open the project memory",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.history",
+        "title": "Past conversations",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.linkChat",
+        "title": "Link the conversation to its AI chat",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.stop",
+        "title": "Stop the AI listening",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.clear",
+        "title": "New conversation (archive the current one)",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.copyPrompt",
+        "title": "Connect an AI chat",
+        "category": "AI Bridge"
+      },
+      {
+        "command": "aiBridge.removeAttachment",
+        "title": "Remove",
+        "category": "AI Bridge",
+        "icon": "$(close)"
+      },
+      {
+        "command": "aiBridge.clearAttachments",
+        "title": "Remove all attachments",
+        "category": "AI Bridge",
+        "icon": "$(clear-all)"
+      }
     ],
     "keybindings": [
-      { "command": "aiBridge.ask", "key": "ctrl+alt+c", "mac": "cmd+alt+c" },
-      { "command": "aiBridge.editSelection", "key": "ctrl+alt+e", "mac": "cmd+alt+e", "when": "editorTextFocus" }
+      {
+        "command": "aiBridge.ask",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c"
+      },
+      {
+        "command": "aiBridge.editSelection",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "editorTextFocus"
+      }
     ],
     "menus": {
       "editor/context": [
-        { "command": "aiBridge.ask", "group": "aibridge@1" },
-        { "command": "aiBridge.editSelection", "group": "aibridge@2", "when": "editorHasSelection" },
-        { "command": "aiBridge.attach", "group": "aibridge@3" }
+        {
+          "command": "aiBridge.ask",
+          "group": "aibridge@1"
+        },
+        {
+          "command": "aiBridge.editSelection",
+          "group": "aibridge@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "aiBridge.attach",
+          "group": "aibridge@3"
+        }
       ],
       "explorer/context": [
-        { "command": "aiBridge.attach", "group": "aibridge@1" }
+        {
+          "command": "aiBridge.attach",
+          "group": "aibridge@1"
+        }
       ],
       "editor/title/context": [
-        { "command": "aiBridge.attach", "group": "aibridge@1" }
+        {
+          "command": "aiBridge.attach",
+          "group": "aibridge@1"
+        }
       ],
       "scm/title": [
-        { "command": "aiBridge.commitMessage", "group": "navigation", "when": "scmProvider == git" }
+        {
+          "command": "aiBridge.commitMessage",
+          "group": "navigation",
+          "when": "scmProvider == git"
+        }
       ],
       "commandPalette": [
-        { "command": "aiBridge.fixDiagnostic", "when": "false" }
+        {
+          "command": "aiBridge.fixDiagnostic",
+          "when": "false"
+        },
+        {
+          "command": "aiBridge.removeAttachment",
+          "when": "false"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "aiBridge.removeAttachment",
+          "when": "view == aiBridge.attachments && viewItem == attachment",
+          "group": "inline"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "aiBridge.clearAttachments",
+          "when": "view == aiBridge.attachments",
+          "group": "navigation"
+        },
+        {
+          "command": "aiBridge.attach",
+          "when": "view == aiBridge.attachments",
+          "group": "navigation"
+        }
       ]
     },
     "configuration": {
@@ -69,11 +221,18 @@
           "default": "",
           "description": "Name of this window when you connect more than one (empty = folder name · computer name)."
         },
+        "aiBridge.autoRunReadOnly": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run read-only commands without asking: listing folders, reading and searching files, git status/log/diff, version checks. Commands that change anything always ask."
+        },
         "aiBridge.autoApproveCommands": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["git status", "git diff", "git log", "git branch", "git show"],
-          "description": "Commands the AI may run without asking (exact prefixes, no &&, |, ; etc.). Every other command asks for confirmation."
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Commands you allowed with \"Always allow\" (exact prefixes, without &&, |, ; etc.). They run without asking."
         },
         "aiBridge.idleMinutes": {
           "type": "number",
@@ -81,6 +240,12 @@
           "description": "After this many minutes with no activity and no AI listening, the extension checks the server every 15 s instead of staying connected."
         }
       }
-    }
+    },
+    "viewsWelcome": [
+      {
+        "view": "aiBridge.attachments",
+        "contents": "Drop files or folders here (from the Explorer or from your computer) to attach them to your next request.\n[Choose files](command:aiBridge.attach)"
+      }
+    ]
   }
 }

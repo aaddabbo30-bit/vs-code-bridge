@@ -44,6 +44,11 @@ const opSets = new Map(); // opsId -> file operations {opsId, ops, desc, status,
 const cpCache = new Map(); // checkpoint id -> {files: {uri: {existed, content}}, ops: [...]}
 const seenJobs = new Set();
 const termLog = []; // recent commands run in the integrated terminal
+const pendingCmds = new Map(); // command card id -> resolve(choice)
+let cmdSeq = 0;
+const attachEmitter = new vscode.EventEmitter();
+const artifactPanels = new Map(); // artifact id -> WebviewPanel
+let artifacts = []; // [{id, title, kind, at}]
 
 // ---------------- activation ----------------
 async function activate(context) {
@@ -72,6 +77,7 @@ async function activate(context) {
   messages.forEach((m) => {
     if (m.role === 'user' && m.state !== 'answered') m.state = 'old';
     if ((m.role === 'edit' || m.role === 'fileops') && m.state === 'pending') m.state = 'expired';
+    if (m.role === 'cmd' && (m.state === 'asking' || m.state === 'running')) m.state = m.state === 'asking' ? 'denied' : 'done';
   });
 
   panel = new ChatViewProvider(context.extensionUri);
@@ -81,6 +87,9 @@ async function activate(context) {
   context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('ai-orig', { provideTextDocumentContent: (u) => changeText(u, 'originalText') }));
   context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('ai-empty', { provideTextDocumentContent: () => '' }));
 
+  artifacts = context.workspaceState.get('claudeBridge.artifacts', []);
+  // a tree view under the chat: VS Code's own drag & drop works there, from the Explorer and from the computer
+  context.subscriptions.push(vscode.window.createTreeView('aiBridge.attachments', { treeDataProvider: new AttachmentsTree(), dragAndDropController: new AttachmentsDrop(), canSelectMany: false }));
   context.subscriptions.push(vscode.languages.registerCodeActionsProvider([{ scheme: 'file' }, { scheme: 'untitled' }], new FixProvider(), { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }));
   setupTerminalCapture(context);
 
@@ -108,6 +117,8 @@ async function activate(context) {
   reg('aiBridge.fixDiagnostic', fixDiagnostic);
   reg('aiBridge.attach', attachCommand);
   reg('aiBridge.openMemory', openMemory);
+  reg('aiBridge.removeAttachment', (a) => { if (a && a.id) { attachments = attachments.filter((x) => x.id !== a.id); refresh(); } });
+  reg('aiBridge.clearAttachments', () => { attachments = []; refresh(); });
 
   context.subscriptions.push({ dispose: () => { running = false; } });
   if (!token) {
@@ -144,13 +155,47 @@ function existingChatPromptText() {
 
 async function copyPrompt() {
   const pick = await vscode.window.showQuickPick([
-    { label: '$(add) For a new chat', detail: 'Open a new AI chat, turn on the VS Code Bridge connector and paste.', id: 'new' },
-    { label: '$(comment-discussion) For a chat that already exists', detail: 'Paste it into a chat where you already discussed the work: the AI uses that context to act here in VS Code.', id: 'existing' },
-  ], { title: 'Copy the prompt for the AI chat', placeHolder: 'Where will you paste it?' });
+    { label: '$(add) A new chat', detail: 'Copies the prompt: open a new AI chat with the VS Code Bridge connector on and paste it.', id: 'new' },
+    { label: '$(comment-discussion) A chat that already exists', detail: 'Pick the chat: it opens in the browser and the AI uses what you discussed there to act here in VS Code.', id: 'existing' },
+  ], { title: 'Connect an AI chat', placeHolder: 'Which chat?' });
   if (!pick) return;
-  await vscode.env.clipboard.writeText(pick.id === 'existing' ? existingChatPromptText() : promptText());
-  const c = await vscode.window.showInformationMessage('Prompt copied: paste it into the AI chat (with the VS Code Bridge connector on). Do you also want to link that chat, to reopen it from here?', 'Link chat');
+  if (pick.id === 'existing') return connectExistingChat();
+  await vscode.env.clipboard.writeText(promptText());
+  const c = await vscode.window.showInformationMessage('Prompt copied: paste it into a new AI chat (with the VS Code Bridge connector on). Do you also want to link that chat, to reopen it from here?', 'Link chat');
   if (c) linkChat();
+}
+
+const CHAT_URL = /^https:\/\/(www\.)?claude\.ai\/\S+$/i;
+
+// Existing chat: choose it from the chats linked before (or paste its link); it opens in the browser
+// with the message that connects it already in the clipboard.
+async function connectExistingChat() {
+  const seen = new Set();
+  const known = [];
+  const add = (url, title, when) => { if (url && !seen.has(url)) { seen.add(url); known.push({ label: '$(comment-discussion) ' + title, description: when ? new Date(when).toLocaleDateString() : '', detail: url, url }); } };
+  add(session.url, 'This conversation', session.startedAt);
+  for (const h of [...history].reverse()) add(h.url, h.title, h.endedAt);
+  const items = [...known, { label: '$(link) Paste the link of a chat…', id: 'paste' }];
+  const pick = await vscode.window.showQuickPick(items, { title: 'Connect a chat that already exists', placeHolder: known.length ? 'Pick a chat you linked before, or paste a new link' : 'Paste the link of the chat' });
+  if (!pick) return;
+  let url = pick.url;
+  if (!url) {
+    const v = await vscode.window.showInputBox({
+      title: 'Link of the AI chat',
+      prompt: 'Copy it from the browser\'s address bar while the chat is open (https://claude.ai/chat/…)',
+      ignoreFocusOut: true,
+      validateInput: (x) => (CHAT_URL.test(x.trim()) ? null : 'It must be a chat link (https://claude.ai/…)'),
+    });
+    if (!v) return;
+    url = v.trim();
+  }
+  session.url = url;
+  saveSession();
+  messages.forEach((m) => { if (m.kind === 'connected') m.action = ''; });
+  persist();
+  await vscode.env.clipboard.writeText(existingChatPromptText());
+  vscode.env.openExternal(vscode.Uri.parse(url));
+  vscode.window.showInformationMessage('Chat linked and opening in the browser. In that chat press Ctrl+V and send: the message that connects it is already in the clipboard.');
 }
 
 async function configure() {
@@ -238,6 +283,7 @@ const HANDLERS = {
   run_command: runCommandJob,
   open_file: openFileJob,
   terminal_output: terminalJob,
+  show_artifact: showArtifactJob,
   memory: memoryJob,
   save_memory: saveMemoryJob,
   save_handoff: saveHandoffJob,
@@ -634,11 +680,13 @@ async function proposeChangesJob(p, job) {
 
   addMessage({ role: 'edit', editId, files: list, desc: cs.desc, state: 'pending', requestId });
   await showChanges(editId);
-  const what = files.length > 1 ? `changes to ${files.length} files` : `a change to ${path.basename(files[0].uri.fsPath)}`;
-  vscode.window.showInformationMessage(`The AI proposes ${what}: ${cs.desc}`, 'Accept', 'Reject').then((c) => {
-    if (c === 'Accept') acceptEdit(editId);
-    else if (c === 'Reject') rejectEdit(editId);
-  });
+  if (!panelVisible()) {
+    const what = files.length > 1 ? `changes to ${files.length} files` : `a change to ${path.basename(files[0].uri.fsPath)}`;
+    vscode.window.showInformationMessage(`The AI proposes ${what}: ${cs.desc}`, 'Accept', 'Reject').then((c) => {
+      if (c === 'Accept') acceptEdit(editId);
+      else if (c === 'Reject') rejectEdit(editId);
+    });
+  }
   return `Diff shown to the user (edit id ${editId}: ${list.join(', ')}). They will accept or reject it${files.length > 1 ? ' as a whole' : ''}; the outcome arrives as an event in follow_vscode.`;
 }
 
@@ -882,12 +930,13 @@ async function proposeFileOpsJob(p, job) {
     return `Done at once (agent mode) — ${opsId}: ${summary}. The user can undo it from the panel (except what went to the Recycle Bin).`;
   }
   addMessage({ ...card, state: 'pending' });
-  vscode.commands.executeCommand(VIEW);
-  vscode.window.showInformationMessage(`The AI proposes to organize files: ${summary}${set.desc ? ' — ' + set.desc : ''}`, 'Accept', 'Show all', 'Reject').then((c) => {
-    if (c === 'Accept') acceptOps(opsId);
-    else if (c === 'Reject') rejectOps(opsId);
-    else if (c === 'Show all') showOps(opsId);
-  });
+  if (!panelVisible()) {
+    vscode.window.showInformationMessage(`The AI proposes to organize files: ${summary}${set.desc ? ' — ' + set.desc : ''}`, 'Accept', 'Show all', 'Reject').then((c) => {
+      if (c === 'Accept') acceptOps(opsId);
+      else if (c === 'Reject') rejectOps(opsId);
+      else if (c === 'Show all') showOps(opsId);
+    });
+  }
   return `Shown to the user for review (${opsId}: ${summary}). They will accept or reject it as a whole; the outcome arrives as an event in follow_vscode.`;
 }
 
@@ -1080,26 +1129,161 @@ async function undoLast() {
 // ---- run_command ----
 const META = /[&|;<>`$()\n\r%^]/;
 
+// Splits a command line at unquoted && || & ; | into segments of tokens.
+// Returns null when it has anything that can write or hide a command: redirections, backticks, $( ), ^ escapes, line breaks.
+function splitCommand(cmd) {
+  const segs = [];
+  let tokens = [];
+  let cur = '';
+  let quote = '';
+  let hasTok = false;
+  const endTok = () => { if (hasTok) tokens.push(cur); cur = ''; hasTok = false; };
+  const endSeg = () => { endTok(); if (tokens.length) segs.push(tokens); tokens = []; };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (quote) {
+      if (c === quote) quote = '';
+      else { if (c === '`' || (c === '$' && cmd[i + 1] === '(')) return null; cur += c; }
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; hasTok = true; continue; }
+    if (c === '\n' || c === '\r' || c === '>' || c === '<' || c === '`' || c === '^') return null;
+    if (c === '$' && cmd[i + 1] === '(') return null;
+    if (c === '&' || c === '|' || c === ';') { if (cmd[i + 1] === c) i++; endSeg(); continue; }
+    if (c === ' ' || c === '\t') { endTok(); continue; }
+    cur += c; hasTok = true;
+  }
+  if (quote) return null;
+  endSeg();
+  return segs;
+}
+
+const RO_PLAIN = new Set(['dir', 'ls', 'tree', 'type', 'cat', 'head', 'tail', 'pwd', 'cd', 'echo', 'where', 'which', 'whoami', 'hostname', 'wc', 'stat', 'file', 'du', 'df', 'findstr', 'grep', 'egrep', 'fgrep', 'rg', 'find', 'sort', 'cut', 'diff', 'fc', 'ver', 'uname', 'tasklist', 'ps', 'nl', 'basename', 'dirname', 'realpath', 'readlink', 'md5sum', 'sha256sum', 'certutil',
+  'get-childitem', 'gci', 'get-content', 'gc', 'get-item', 'gi', 'get-itemproperty', 'gp', 'get-location', 'gl', 'select-string', 'sls', 'test-path', 'resolve-path', 'measure-object', 'select-object', 'sort-object', 'format-table', 'ft', 'format-list', 'fl', 'where-object', 'out-string', 'get-filehash', 'get-date', 'get-command', 'get-process']);
+const VERSION_TOOLS = new Set(['node', 'npm', 'npx', 'python', 'python3', 'py', 'pip', 'pip3', 'java', 'javac', 'git', 'dotnet', 'go', 'cargo', 'rustc', 'ruby', 'php', 'perl', 'r', 'rscript', 'conda', 'docker', 'code', 'gcc', 'make', 'cmake', 'mvn', 'gradle', 'yarn', 'pnpm', 'tsc', 'deno', 'bun', 'uv', 'poetry']);
+const VERSION_FLAGS = new Set(['--version', '-v', '-V', 'version', '-version', '--info']);
+const BAD_ARGS = { find: /^-(delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$/, sort: /^(-o|--output.*|\/o)$/i, rg: /^--pre/, head: /^(-f|--follow.*|-F)$/, tail: /^(-f|--follow.*|-F)$/, certutil: /^(?!-hashfile$).*$/i };
+
+function gitReadOnly(args) {
+  if (args.some((a) => /^(-c|--exec-path.*|--output.*|-O|--open-files-in-pager.*|--upload-pack.*)$/.test(a))) return false;
+  const [sub, ...rest] = args;
+  const flagsOnly = (ok) => rest.every((a) => ok.includes(a));
+  switch (sub) {
+    case 'status': case 'diff': case 'log': case 'show': case 'blame': case 'ls-files': case 'ls-tree': case 'rev-parse': case 'describe':
+    case 'shortlog': case 'reflog': case 'grep': case 'cat-file': case 'count-objects': case 'whatchanged': case '--version': case 'version':
+      return !(sub === 'reflog' && rest[0] && rest[0] !== 'show');
+    case 'branch': return flagsOnly(['-a', '--all', '-r', '--remotes', '-v', '-vv', '--list', '--show-current']);
+    case 'remote': return !rest.length || ['-v', '--verbose', 'show', 'get-url'].includes(rest[0]);
+    case 'tag': return !rest.length || ['-l', '--list', '-n'].includes(rest[0]);
+    case 'stash': return ['list', 'show'].includes(rest[0]);
+    case 'config': return rest.some((a) => ['--get', '--get-all', '--list', '-l', '--get-regexp'].includes(a)) && !rest.some((a) => /^(--unset.*|--add|--replace-all|--edit|-e|--remove-section|--rename-section)$/.test(a));
+    default: return false;
+  }
+}
+
+function segmentReadOnly(tokens) {
+  let [first, ...args] = tokens;
+  first = first.toLowerCase().replace(/\.exe$/, '');
+  if (first === 'cmd' && /^\/[ck]$/i.test(args[0] || '')) return commandReadOnly(args.slice(1).join(' '));
+  if (first === 'powershell' || first === 'pwsh') {
+    let i = 0;
+    while (i < args.length && /^-(noprofile|nop|noninteractive|noni|nologo)$/i.test(args[i])) i++;
+    if (!/^-(command|c)$/i.test(args[i] || '')) return false;
+    const inner = args.slice(i + 1).join(' ');
+    if (/[{}$@()&.]/.test(inner.replace(/\.\w+/g, '').replace(/\\|\//g, ''))) return false;
+    return commandReadOnly(inner);
+  }
+  if (args.length === 1 && VERSION_TOOLS.has(first) && VERSION_FLAGS.has(args[0])) return true;
+  if (first === 'git') return gitReadOnly(args);
+  if (first === 'npm') return ['ls', 'list', 'll', 'la', 'view', 'info', 'outdated', 'root', 'prefix', 'explain', 'why'].includes(args[0]) || (args[0] === 'config' && ['get', 'list', 'ls'].includes(args[1]));
+  if (first === 'pip' || first === 'pip3') return ['list', 'show', 'freeze', 'check'].includes(args[0]);
+  if ((first === 'python' || first === 'python3' || first === 'py') && args[0] === '-m' && args[1] === 'pip') return ['list', 'show', 'freeze', 'check'].includes(args[2]);
+  if (first === 'conda') return ['list', 'info'].includes(args[0]) || (args[0] === 'env' && args[1] === 'list');
+  if (first === 'docker') return ['ps', 'images', 'version', 'info', 'inspect', 'logs'].includes(args[0]) && !args.includes('-f') && !args.includes('--follow');
+  if (first === 'dotnet') return ['--info', '--list-sdks', '--list-runtimes', '--version'].includes(args[0]) && args.length === 1;
+  if (!RO_PLAIN.has(first)) return false;
+  const bad = BAD_ARGS[first];
+  if (bad && (first === 'certutil' ? !args.length || bad.test(args[0]) : args.some((a) => bad.test(a)))) return false;
+  return true;
+}
+
+// True for commands that only look at things: list folders, read and search files, git status/log/diff, versions.
+function commandReadOnly(cmd) {
+  const segs = splitCommand(String(cmd || '').trim());
+  if (!segs || !segs.length) return false;
+  return segs.every(segmentReadOnly);
+}
+
+// What "Always allow" remembers: the exact command for interpreters, else the tool and its subcommand.
+function alwaysPrefix(command) {
+  const t = command.trim().split(/\s+/);
+  const first = t[0].toLowerCase().replace(/\.exe$/, '');
+  if (['python', 'python3', 'py', 'node', 'powershell', 'pwsh', 'cmd', 'bash', 'sh', 'zsh', 'ruby', 'perl', 'php', 'rscript', 'r', 'java', 'deno', 'bun'].includes(first)) return command.trim();
+  if (['npm', 'pnpm', 'yarn'].includes(first) && ['run', 'exec', 'run-script'].includes(t[1]) && t[2]) return t.slice(0, 3).join(' ');
+  if (['git', 'npm', 'npx', 'pnpm', 'yarn', 'pip', 'pip3', 'dotnet', 'docker', 'cargo', 'go', 'conda', 'kubectl', 'terraform', 'mvn', 'gradle', 'make', 'poetry', 'uv'].includes(first) && t[1]) return t.slice(0, 2).join(' ');
+  return t[0];
+}
+
+// The exact command the user allowed, or a longer one that only adds plain arguments (no &&, |, ;, >, $( ) and so on).
+function allowedByUser(command) {
+  return (cfg().get('autoApproveCommands') || []).some((a) => a && (command === a || (command.startsWith(a + ' ') && !META.test(command.slice(a.length)))));
+}
+
+function panelVisible() { return !!(panel && panel.view && panel.view.visible); }
+
+// Asks in the panel (and with a small notification only when the panel is not in sight). Resolves 'run', 'always' or 'deny'.
+function askToRun(msg) {
+  return new Promise((resolve) => {
+    const id = msg.cmdId;
+    const timer = setTimeout(() => answerCmd(id, 'timeout'), 15 * 60000);
+    pendingCmds.set(id, (choice) => { clearTimeout(timer); resolve(choice); });
+    if (!panelVisible()) {
+      vscode.window.showInformationMessage(`The AI wants to run: ${msg.text}`, 'Run', 'Always allow', 'Deny').then((c) => {
+        if (c) answerCmd(id, c === 'Run' ? 'run' : c === 'Always allow' ? 'always' : 'deny');
+      });
+    }
+  });
+}
+
+function answerCmd(id, choice) {
+  const done = pendingCmds.get(id);
+  if (!done) return;
+  pendingCmds.delete(id);
+  done(choice);
+}
+
 async function runCommandJob(p) {
   const command = String(p.command || '').trim();
   if (!command) throw new Error('command missing');
   const base = folders()[0] ? folders()[0].uri.fsPath : process.cwd();
   const cwd = p.cwd ? resolvePath(p.cwd).fsPath : base;
-  const auto = (cfg().get('autoApproveCommands') || []).some((a) => (command === a || command.startsWith(a + ' '))) && !META.test(command);
-  const msgRef = addMessage({ role: 'cmd', text: command, state: auto ? 'auto' : 'asking' });
+  const readOnly = cfg().get('autoRunReadOnly') !== false && commandReadOnly(command);
+  const auto = readOnly || allowedByUser(command);
+  const prefix = alwaysPrefix(command);
+  const msgRef = addMessage({ role: 'cmd', cmdId: 'c' + (++cmdSeq), text: command, cwd, reason: p.reason ? String(p.reason).slice(0, 300) : '', prefix, state: auto ? (readOnly ? 'readonly' : 'auto') : 'asking' });
   if (!auto) {
-    const choice = await vscode.window.showWarningMessage(
-      'The AI wants to run this command:', { modal: true, detail: `${command}\n\nFolder: ${cwd}${p.reason ? '\nWhy: ' + p.reason : ''}` }, 'Run');
-    if (choice !== 'Run') { msgRef.state = 'denied'; persist(); return 'The user did NOT allow this command. Ask them in your reply if it is needed, or do without it.'; }
+    const choice = await askToRun(msgRef);
+    if (choice === 'always') {
+      const list = (cfg().get('autoApproveCommands') || []).filter((x) => x !== prefix);
+      await cfg().update('autoApproveCommands', [...list, prefix], vscode.ConfigurationTarget.Global);
+      msgRef.state = 'always';
+    }
+    if (choice !== 'run' && choice !== 'always') {
+      msgRef.state = 'denied'; persist();
+      return choice === 'timeout' ? 'The user did not answer within 15 minutes, so the command did NOT run.' : 'The user did NOT allow this command. Ask them in your reply if it is needed, or do without it.';
+    }
   }
-  msgRef.state = 'running'; persist();
+  if (msgRef.state !== 'readonly') msgRef.state = 'running';
+  persist();
   const timeout = Math.min(Number(p.timeout_seconds) || 120, 600) * 1000;
   const r = await new Promise((resolve) => {
     cp.exec(command, { cwd, timeout, maxBuffer: 20 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, killed: !!(err && err.killed), stdout: String(stdout || ''), stderr: String(stderr || '') });
     });
   });
-  msgRef.state = r.code === 0 ? 'done' : 'failed'; persist();
+  if (msgRef.state !== 'readonly') msgRef.state = r.code === 0 ? 'done' : 'failed';
+  else if (r.code !== 0) msgRef.state = 'failed';
+  persist();
   const tail = (s, n) => (s.length > n ? `… [first ${s.length - n} characters left out]\n` + s.slice(-n) : s);
   return `$ ${command}\n(cwd: ${cwd})\nexit code: ${r.code}${r.killed ? ' (stopped by the timeout)' : ''}\n--- stdout ---\n${tail(r.stdout, 15000) || '(empty)'}\n--- stderr ---\n${tail(r.stderr, 6000) || '(empty)'}`;
 }
@@ -1535,6 +1719,150 @@ async function collectAttachments() {
   return out;
 }
 
+class AttachmentsTree {
+  constructor() { this.onDidChangeTreeData = attachEmitter.event; }
+  getTreeItem(a) {
+    const name = a.kind === 'folder' ? a.label : (a.name || path.basename(a.label));
+    const it = new vscode.TreeItem(name);
+    it.description = a.uri && a.label !== name ? a.label : a.uri ? '' : 'from your computer';
+    it.tooltip = a.label;
+    it.iconPath = new vscode.ThemeIcon(a.kind === 'folder' ? 'folder' : 'file');
+    it.contextValue = 'attachment';
+    return it;
+  }
+  getChildren(el) { return el ? [] : attachments; }
+}
+
+// Files dropped on the Attachments view: from the Explorer (text/uri-list) or from the computer (files).
+class AttachmentsDrop {
+  constructor() { this.dropMimeTypes = ['text/uri-list', 'files']; this.dragMimeTypes = []; }
+  async handleDrop(target, dt) { await dropFiles(dt); }
+}
+
+async function dropFiles(dt) {
+  const uris = [];
+  const list = dt.get('text/uri-list');
+  if (list) {
+    for (const x of String(await list.asString()).split(/\r?\n/)) { const t = x.trim(); if (t && !t.startsWith('#')) uris.push(t); }
+  }
+  if (!uris.length) {
+    const items = [];
+    dt.forEach((item, mime) => items.push([mime, item]));
+    const texts = [];
+    for (const [, item] of items) {
+      const f = item && typeof item.asFile === 'function' ? item.asFile() : null;
+      if (!f) continue;
+      if (f.uri) { uris.push(f.uri); continue; }
+      const bytes = await f.data();
+      if (bytes.length > MAX_ATTACH_FILE_BYTES) texts.push({ name: f.name, error: 'too big (max 2 MB)' });
+      else if (isBinary(bytes)) texts.push({ name: f.name, error: 'binary file' });
+      else texts.push({ name: f.name, text: Buffer.from(bytes).toString('utf8') });
+    }
+    if (texts.length) attachTexts(texts);
+  }
+  if (uris.length) await attachUris(uris);
+}
+
+// ---- artifacts: pages, reports and charts the AI opens in the middle of VS Code ----
+const ARTIFACT_CSP = "default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';";
+const ARTIFACT_CSS = 'body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background:var(--vscode-editor-background);padding:16px 28px;line-height:1.55;max-width:1100px}a{color:var(--vscode-textLink-foreground)}table{border-collapse:collapse;margin:8px 0}th,td{border:1px solid var(--vscode-panel-border,#8884);padding:4px 10px;text-align:left}th{background:var(--vscode-editorWidget-background)}code,pre{font-family:var(--vscode-editor-font-family)}code{background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:4px}pre{background:var(--vscode-textCodeBlock-background);padding:10px;border-radius:6px;overflow:auto}pre code{background:none;padding:0}img,svg{max-width:100%}h1,h2,h3{line-height:1.25}blockquote{margin:0;padding-left:12px;border-left:3px solid var(--vscode-panel-border,#8884);color:var(--vscode-descriptionForeground)}';
+function artifactDir() { return vscode.Uri.joinPath(ctxExt.storageUri || ctxExt.globalStorageUri, 'artifacts'); }
+function artifactFile(id) { return vscode.Uri.joinPath(artifactDir(), id + '.json'); }
+const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+function mdToHtml(text) {
+  const inline = (s) => escHtml(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
+  const out = [];
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+  let list = null; let para = [];
+  const flush = () => { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } if (list) { out.push(`<${list.t}>${list.items.map((x) => '<li>' + inline(x) + '</li>').join('')}</${list.t}>`); list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*```/.test(l)) { flush(); const buf = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]); out.push('<pre><code>' + escHtml(buf.join('\n')) + '</code></pre>'); continue; }
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    const li = l.match(/^\s*(?:[-*+]|(\d+)[.)])\s+(.*)/);
+    if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
+    else if (li) { if (para.length) flush(); const t = li[1] ? 'ol' : 'ul'; if (!list || list.t !== t) { flush(); list = { t, items: [] }; } list.items.push(li[2]); }
+    else if (!l.trim()) flush();
+    else { if (list) flush(); para.push(l); }
+  }
+  flush();
+  return out.join('\n');
+}
+
+async function artifactHtml(a, content) {
+  const page = (body) => `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${escHtml(a.title)}</title><style>${ARTIFACT_CSS}</style></head><body>${body}</body></html>`;
+  if (a.kind === 'markdown') {
+    let body = '';
+    try { body = await vscode.commands.executeCommand('markdown.api.render', content); } catch { /* no markdown extension */ }
+    return page(typeof body === 'string' && body ? body : mdToHtml(content));
+  }
+  if (a.kind === 'svg') return page(content);
+  if (/<html[\s>]/i.test(content)) {
+    // a whole page: our policy goes first in <head>, so it applies whatever the page declares
+    const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+    if (/<head[^>]*>/i.test(content)) return content.replace(/<head[^>]*>/i, (m) => m + meta);
+    return content.replace(/<html[^>]*>/i, (m) => m + '<head>' + meta + '</head>');
+  }
+  return page(content);
+}
+
+async function openArtifactPanel(a, content) {
+  let p = artifactPanels.get(a.id);
+  if (!p) {
+    p = vscode.window.createWebviewPanel('aiBridge.artifact', 'AI: ' + a.title, { viewColumn: vscode.ViewColumn.Active, preserveFocus: true }, { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
+    p.onDidDispose(() => artifactPanels.delete(a.id));
+    artifactPanels.set(a.id, p);
+  } else {
+    p.title = 'AI: ' + a.title;
+    p.reveal(undefined, true);
+  }
+  p.webview.html = await artifactHtml(a, content);
+}
+
+async function showArtifactJob(p) {
+  const kind = ['html', 'markdown', 'svg'].includes(p.kind) ? p.kind : 'html';
+  const content = String(p.content || '');
+  if (!content.trim()) throw new Error('content is empty');
+  if (content.length > 2000000) throw new Error('content too big (max 2 MB)');
+  const id = String(p.id || '').replace(/[^\w-]/g, '').slice(0, 40) || 'a' + Date.now().toString(36);
+  const a = { id, title: String(p.title || 'Artifact').slice(0, 120), kind, at: Date.now() };
+  await vscode.workspace.fs.createDirectory(artifactDir());
+  await vscode.workspace.fs.writeFile(artifactFile(id), Buffer.from(JSON.stringify({ ...a, content }), 'utf8'));
+  artifacts = artifacts.filter((x) => x.id !== id);
+  artifacts.push(a);
+  while (artifacts.length > 50) { const old = artifacts.shift(); Promise.resolve(vscode.workspace.fs.delete(artifactFile(old.id))).catch(() => {}); }
+  ctxExt.workspaceState.update('claudeBridge.artifacts', artifacts);
+  await openArtifactPanel(a, content);
+  const m = messages.find((x) => x.role === 'artifact' && x.artifactId === id);
+  if (m) { m.title = a.title; m.kind = kind; m.version = (m.version || 1) + 1; persist(); }
+  else addMessage({ role: 'artifact', artifactId: id, title: a.title, kind, version: 1 });
+  return `Shown in VS Code in an editor tab "${a.title}" (artifact id "${id}": call show_artifact with this id to update it).`;
+}
+
+async function loadArtifact(id) {
+  try { return JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(artifactFile(id))).toString('utf8')); } catch { return null; }
+}
+
+async function openArtifact(id) {
+  const a = await loadArtifact(id);
+  if (!a) { vscode.window.showWarningMessage('AI Bridge: this artifact is no longer available.'); return; }
+  await openArtifactPanel(a, a.content);
+}
+
+async function saveArtifact(id) {
+  const a = await loadArtifact(id);
+  if (!a) { vscode.window.showWarningMessage('AI Bridge: this artifact is no longer available.'); return; }
+  const ext = a.kind === 'markdown' ? 'md' : a.kind === 'svg' ? 'svg' : 'html';
+  const name = (a.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'artifact') + '.' + ext;
+  const base = folders()[0] ? folders()[0].uri : vscode.Uri.file(os.homedir());
+  const to = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(base, name), filters: { [ext.toUpperCase()]: [ext] } });
+  if (!to) return;
+  const text = a.kind === 'html' && !/<html[\s>]/i.test(a.content) ? `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escHtml(a.title)}</title></head><body>${a.content}</body></html>` : a.content;
+  await vscode.workspace.fs.writeFile(to, Buffer.from(text, 'utf8'));
+  vscode.window.setStatusBarMessage('AI: saved ' + path.basename(to.fsPath), 4000);
+}
+
 // ---------------- sending requests ----------------
 async function askCommand(kind) {
   const ed = vscode.window.activeTextEditor;
@@ -1613,6 +1941,7 @@ function persist() {
 
 function refresh() {
   updateStatus();
+  attachEmitter.fire();
   if (panel) panel.post();
 }
 
@@ -1661,8 +1990,8 @@ class ChatViewProvider {
 <button type="button" class="icon" id="stop" title="Stop: the AI chat stops following VS Code">${icon('debug-stop')}</button>
 <button type="submit" class="send" id="send" title="Send (Enter)">${icon('send')}</button>
 </div></div>
-<div class="hint">Enter to send · Shift+Enter for a new line · drop files here</div></form>
-<div id="drop">${icon('new-file')}<div>Drop to attach for the AI</div><small>If VS Code opens the file instead of attaching it, hold Shift while dropping.</small></div>
+<div class="hint">Enter to send · Shift+Enter new line · drop files on <b>Attachments</b></div></form>
+<div id="drop">${icon('new-file')}<div>Drop to attach for the AI</div><small>If it does not attach, drop the files on the <b>Attachments</b> section below the chat.</small></div>
 <script nonce="${nonce}" src="${res('panel.js')}"></script></body></html>`;
     w.onDidReceiveMessage((m) => this.onMessage(m));
     view.onDidChangeVisibility(() => { if (view.visible) this.post(); });
@@ -1720,9 +2049,12 @@ class ChatViewProvider {
         return;
       }
       case 'removeAttachment': attachments = attachments.filter((a) => a.id !== m.id); return refresh();
+      case 'cmdAnswer': return answerCmd(m.id, m.choice);
+      case 'openArtifact': return openArtifact(m.id);
+      case 'saveArtifact': return saveArtifact(m.id);
       case 'clear': return newConversation();
     }
   }
 }
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, _test: { commandReadOnly, alwaysPrefix } };

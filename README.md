@@ -11,14 +11,16 @@ VS Code (AI Bridge extension) ──HTTPS──▶ Cloudflare Worker (this repo,
 
 ## What it does
 - **Chat panel** in the side bar (styled with your VS Code theme), plus `Ctrl+Alt+C` (ask) and `Ctrl+Alt+E` (edit the selection).
-- **Attachments**: drop files or folders into the panel (from VS Code's Explorer or from your computer; if VS Code opens the file instead of attaching it, hold Shift), or right click → *Attach for the AI*. Their content goes into the request.
+- **Attachments**: drop files or folders on the *Attachments* section under the chat (from VS Code's Explorer or from your computer), or right click → *Attach for the AI*. Their content goes into the request.
 - **Code changes**: one file (`propose_edit`) or several files at once (`propose_changes`, one review). Diff with Accept / Reject.
-- **Agent mode** (*Agent* toggle): changes are applied at once; every request gets a restore point and an *Undo changes* button. The AI shows its plan (`update_plan`) and gets the problems VS Code reports in the changed files, so it fixes them itself. Commands always ask first (except read-only `git`).
+- **Agent mode** (*Agent* toggle): changes are applied at once; every request gets a restore point and an *Undo changes* button. The AI shows its plan (`update_plan`) and gets the problems VS Code reports in the changed files, so it fixes them itself. Commands that can change anything always ask first.
+- **Commands**: read-only commands (listing folders, reading and searching files, `git status/log/diff`, version checks) run without asking. Anything else shows a card in the panel with *Run*, *Always allow* (remembered in `aiBridge.autoApproveCommands`) and *Deny* — no blocking pop-ups.
+- **Artifacts**: the AI opens reports, tables, charts and small interactive pages in the middle of VS Code (`show_artifact`: HTML, markdown or SVG, with no network access); reopen them or save them as files from the panel.
 - **Organize files anywhere on the computer** (e.g. Downloads): the AI looks with `list_dir` and proposes create / move / rename / Recycle Bin operations with `propose_file_ops`. You review them in the panel (in agent mode they are applied at once) and can undo them; nothing is ever overwritten or deleted for good, and system folders are refused. Files sent to the Recycle Bin are restored from the Recycle Bin.
 - **Project memory** (`.ai-bridge/MEMORY.md`): the AI reads it at the start of every chat and updates it with `save_memory`.
 - **New chat without losing the thread**: the ⇄ button → the AI writes a summary (`.ai-bridge/HANDOFF.md`) and the new chat gets it in its first round.
 - **History** of the panel conversations, each one linkable to its web chat (reopens with one click); *Resume* prepares the summary of an old conversation for a new chat.
-- **Existing chats**: *Copy prompt* → *For a chat that already exists*: paste it into a chat where you already discussed the work, and the AI uses that context to act in VS Code.
+- **Existing chats**: *Connect chat* → *A chat that already exists* → pick it from the chats you linked before (or paste its link): it opens in the browser with the message that connects it already in the clipboard; press Ctrl+V and send. The AI then uses that chat's context to act in VS Code.
 - **Light bulb on problems** (`Ctrl+.`): *Ask the AI to fix it*.
 - **Commit message**: ✨ icon in the Git panel.
 - **Terminal**: the AI reads the last commands of the integrated terminal and their output (`get_terminal_output`).
@@ -51,7 +53,7 @@ npx @vscode/vsce package --allow-missing-repository --skip-license -o ../dist/ai
 VS Code → Extensions → … → Install from VSIX. Then run **AI Bridge: Configure** (worker URL + token). Earlier versions' token and settings are carried over automatically.
 
 ## Use
-In the AI panel press *Copy prompt* and paste it into an AI chat with the connector on (new or existing). From then on you work in VS Code.
+In the AI panel press *Connect chat*: for a new chat, paste the copied prompt into it; for an existing chat, pick it and send the message that is already in the clipboard. From then on you work in VS Code.
 
 ## Tests
 ```
@@ -63,4 +65,4 @@ node ../extension/test/integration.js          # the real extension, with a simu
 ```
 
 ## MCP tools
-follow_vscode, reply, update_plan, list_vscode_windows, get_editor_context, read_file, list_files, list_dir, search, get_diagnostics, get_terminal_output, propose_edit, propose_changes, propose_file_ops, run_command, open_file, save_memory, save_handoff, get_result.
+follow_vscode, reply, update_plan, show_artifact, list_vscode_windows, get_editor_context, read_file, list_files, list_dir, search, get_diagnostics, get_terminal_output, propose_edit, propose_changes, propose_file_ops, run_command, open_file, save_memory, save_handoff, get_result.

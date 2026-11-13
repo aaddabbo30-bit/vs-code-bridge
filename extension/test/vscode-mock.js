@@ -24,6 +24,9 @@ class WorkspaceEdit { constructor() { this.ops = []; } replace(uri, range, text)
 class CodeAction { constructor(title, kind) { this.title = title; this.kind = kind; } }
 class RelativePattern { constructor(base, pattern) { this.base = typeof base === 'string' ? Uri.file(base) : base; this.pattern = pattern; } }
 class TabInputTextDiff {}
+class EventEmitter { constructor() { this.l = []; this.event = (fn) => { this.l.push(fn); return { dispose() {} }; }; } fire(x) { this.l.forEach((f) => f(x)); } }
+class TreeItem { constructor(label) { this.label = label; } }
+class ThemeIcon { constructor(id) { this.id = id; } }
 
 class Doc {
   constructor(uri, text) { this.uri = uri; this._text = text; this.isDirty = false; this.languageId = path.extname(uri.path).slice(1) || 'plaintext'; }
@@ -58,9 +61,9 @@ function create(root) {
   const providers = {};
   const config = { aiBridge: {}, claudeBridge: {} }; // settings by section
   const defaults = { serverUrl: '', windowName: '', autoApproveCommands: ['git status'], idleMinutes: 20 };
-  const log = { info: [], warn: [], error: [], executed: [], shown: [], status: [], opened: [], trashed: [], untitled: [] };
+  const log = { info: [], warn: [], error: [], executed: [], shown: [], status: [], opened: [], trashed: [], untitled: [], webviewPanels: [] };
   const trashDir = path.join(root, '.trash-bin');
-  const answers = { info: () => undefined, warn: () => undefined, input: () => undefined, pick: () => undefined, open: () => undefined };
+  const answers = { info: () => undefined, warn: () => undefined, input: () => undefined, pick: () => undefined, open: () => undefined, save: () => undefined };
   const listeners = { termStart: [], termEnd: [] };
   const clipboard = { text: '' };
   const root$ = Uri.file(root);
@@ -68,7 +71,8 @@ function create(root) {
   const statOf = (p) => { try { return fs.statSync(p); } catch { const e = new Error('FileNotFound: ' + p); e.code = 'FileNotFound'; throw e; } };
 
   const vscode = {
-    Uri, Position, Range, WorkspaceEdit, CodeAction, RelativePattern, TabInputTextDiff,
+    Uri, Position, Range, WorkspaceEdit, CodeAction, RelativePattern, TabInputTextDiff, EventEmitter, TreeItem, ThemeIcon,
+    ViewColumn: { Active: -1, Beside: -2, One: 1 },
     CodeActionKind: { QuickFix: 'quickfix' },
     DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
     StatusBarAlignment: { Left: 1, Right: 2 },
@@ -154,6 +158,13 @@ function create(root) {
       setStatusBarMessage: (m) => { log.status.push(m); return { dispose() {} }; },
       createStatusBarItem: () => ({ text: '', tooltip: '', command: '', show() {}, dispose() {} }),
       registerWebviewViewProvider: (id, p) => { providers.view = p; return { dispose() {} }; },
+      createTreeView: (id, o) => { providers.tree = o; return { dispose() {} }; },
+      createWebviewPanel: (type, title, show, opts) => {
+        const p = { type, title, show, opts, webview: { html: '' }, reveals: 0, reveal() { p.reveals++; }, onDidDispose: () => ({ dispose() {} }), dispose() {} };
+        log.webviewPanels.push(p);
+        return p;
+      },
+      showSaveDialog: async (o) => answers.save(o),
       onDidStartTerminalShellExecution: (fn) => { listeners.termStart.push(fn); return { dispose() {} }; },
       onDidEndTerminalShellExecution: (fn) => { listeners.termEnd.push(fn); return { dispose() {} }; },
     },

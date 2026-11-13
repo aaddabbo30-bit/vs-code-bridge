@@ -60,9 +60,35 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   await panel({ type: 'copyPrompt' });
   const win = (mock.clipboard.text.match(/window "([a-z0-9]+)"/) || [])[1];
   assert(win && mock.clipboard.text.includes('follow_vscode'), 'copied prompt names the window');
-  mock.answers.pick = (items) => items.find((i) => i.id === 'existing');
+  let picks = 0;
+  mock.answers.pick = (items) => (++picks === 1 ? items.find((i) => i.id === 'existing') : items.find((i) => i.id === 'paste'));
+  mock.answers.input = (o) => (o.validateInput('nope') && !o.validateInput('https://claude.ai/chat/old') ? 'https://claude.ai/chat/old' : undefined);
   await panel({ type: 'copyPrompt' });
-  assert(mock.clipboard.text.includes('Connect this chat') && mock.clipboard.text.includes(`window "${win}"`), 'prompt for an existing chat');
+  assert(mock.clipboard.text.includes('Connect this chat') && mock.clipboard.text.includes(`window "${win}"`) && mock.log.opened.includes('https://claude.ai/chat/old') && st().session.url === 'https://claude.ai/chat/old', 'existing chat: link pasted, chat opened, message already in the clipboard');
+  picks = 0;
+  let offered = [];
+  mock.answers.pick = (items) => { if (++picks === 1) return items.find((i) => i.id === 'existing'); offered = items; return undefined; };
+  await panel({ type: 'copyPrompt' });
+  assert(offered.some((i) => i.url === 'https://claude.ai/chat/old') && offered.some((i) => i.id === 'paste'), 'linked chats offered in the dropdown');
+
+  // ---------- which commands count as read-only ----------
+  const RO = ext._test.commandReadOnly;
+  for (const c of ['dir', 'dir /s *.py', 'ls -la src', 'type README.md', 'cat a.txt | grep x', 'git status', 'git log --oneline -5', 'git diff HEAD~1', 'git branch -a', 'git remote -v', 'node --version', 'python -m pip list', 'pip show requests', 'npm ls', 'findstr /s TODO *.py', 'cd src && dir', 'powershell -NoProfile -Command "Get-ChildItem ~/Downloads | Measure-Object"', 'echo %USERPROFILE%', 'tree /f', 'where python', 'git config --get user.name']) assert(RO(c), 'read-only: ' + c);
+  for (const c of ['del a.txt', 'rm -rf x', 'echo hi > a.txt', 'type a.txt >> b.txt', 'git commit -m x', 'git branch -D main', 'git push', 'git -c core.pager=x log', 'git log --output=a.txt', 'npm install', 'npm run build', 'pip install x', 'python script.py', 'node -e "1"', 'find . -delete', 'find . -exec rm {} ;', 'sort a -o b', 'd^el a.txt', 'dir & del a.txt', 'curl https://x.y', 'powershell -Command "Remove-Item a"', 'powershell -Command "Get-ChildItem | ForEach-Object { Remove-Item $_ }"', 'cmd /c del a', 'tail -f log.txt', 'rg --pre cat x', 'set', 'env']) assert(!RO(c), 'asks first: ' + c);
+  assert(ext._test.alwaysPrefix('npm run build -- --prod') === 'npm run build' && ext._test.alwaysPrefix('git commit -m x') === 'git commit' && ext._test.alwaysPrefix('python tools/x.py --a') === 'python tools/x.py --a', '"Always allow" remembers a safe prefix');
+
+  // ---------- drop files on the Attachments view ----------
+  const dropAt = (mime, val) => ({ get: (m) => (m === mime ? { asString: async () => val } : undefined), forEach() {} });
+  await mock.providers.tree.dragAndDropController.handleDrop(undefined, dropAt('text/uri-list', Uri.file(file('src', 'a.py')).toString() + '\r\n'));
+  await mock.providers.tree.dragAndDropController.handleDrop(undefined, { get: () => undefined, forEach: (cb) => { cb({ asFile: () => ({ name: 'from-desktop.txt', data: async () => Buffer.from('desktop note') }) }, 'files'); cb({ asFile: () => ({ name: 'pic.png', data: async () => Buffer.from([137, 80, 0, 0]) }) }, 'files'); } });
+  const tree = mock.providers.tree.treeDataProvider;
+  const kids = tree.getChildren();
+  assert(kids.length === 2 && tree.getTreeItem(kids[0]).label === 'a.py' && tree.getTreeItem(kids[1]).description === 'from your computer', 'files dropped on Attachments are attached (Explorer and computer)');
+  assert(mock.log.warn.some((w) => w.includes('pic.png')), 'binary file dropped is refused');
+  await mock.vscode.commands.executeCommand('aiBridge.removeAttachment', kids[1]);
+  assert(st().attachments.length === 1, 'an attachment can be removed');
+  await mock.vscode.commands.executeCommand('aiBridge.clearAttachments');
+  assert(st().attachments.length === 0, 'attachments can be cleared');
 
   // ---------- first round + request with an attached file ----------
   const f1P = tool('follow_vscode', { window: win });
@@ -136,9 +162,19 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   cursor = cursorOf(f4);
 
   // ---------- commands, terminal, memory ----------
-  mock.answers.warn = (msg, items) => (items.includes('Run') ? 'Run' : undefined);
   const rc = await tool('run_command', { window: win, command: 'echo ciao' });
-  assert(rc.includes('exit code: 0') && rc.includes('ciao'), 'run_command after approval');
+  assert(rc.includes('exit code: 0') && rc.includes('ciao') && msgs().some((m) => m.role === 'cmd' && m.text === 'echo ciao' && m.state === 'readonly'), 'read-only command runs without asking');
+  const nodeCmd = 'node -e "console.log(41+1)"';
+  const rcP = tool('run_command', { window: win, command: nodeCmd, reason: 'calcolo' });
+  const ask = await until(() => msgs().find((m) => m.role === 'cmd' && m.text === nodeCmd && m.state === 'asking'), 'approval card');
+  assert(ask.reason === 'calcolo' && ask.prefix === nodeCmd && !mock.log.info.some((t) => t.includes(nodeCmd)), 'approval asked in the panel, no pop-up while the panel is open');
+  await panel({ type: 'cmdAnswer', id: ask.cmdId, choice: 'always' });
+  assert((await rcP).includes('42') && mock.config.aiBridge.autoApproveCommands.includes(nodeCmd), '"Always allow" runs it and remembers it');
+  assert((await tool('run_command', { window: win, command: nodeCmd })).includes('42') && msgs().filter((m) => m.text === nodeCmd).pop().state === 'done', 'an always-allowed command no longer asks');
+  const denyP = tool('run_command', { window: win, command: 'echo hi > made.txt' });
+  const ask2 = await until(() => msgs().find((m) => m.role === 'cmd' && m.text === 'echo hi > made.txt' && m.state === 'asking'), 'second approval card');
+  await panel({ type: 'cmdAnswer', id: ask2.cmdId, choice: 'deny' });
+  assert((await denyP).includes('did NOT allow') && !fs.existsSync(file('made.txt')), 'denied command does not run');
   async function* stream() { yield '\x1b[32mPASS\x1b[0m test_a\r\n'; yield 'progress 10%\rprogress 100%\n'; }
   const execution = { commandLine: { value: 'npm test' }, cwd: Uri.file(root), read: stream };
   mock.listeners.termStart.forEach((fn) => fn({ terminal: { name: 'pwsh' }, execution }));
@@ -226,6 +262,23 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   const ag = await tool('propose_file_ops', { window: win, request_id: rqD, description: 'installers', operations: [{ op: 'move', path: '~/Downloads/setup.exe', to: '~/Downloads/Installers/setup.exe' }] });
   assert(ag.includes('Done at once') && fs.existsSync(dlp('Installers', 'setup.exe')), 'agent mode does it at once');
   await panel({ type: 'agent', on: false });
+
+  // ---------- artifacts in the middle of VS Code ----------
+  mock.log.webviewPanels.length = 0;
+  const art = await tool('show_artifact', { window: win, title: 'Report vendite', kind: 'html', content: '<h1>Vendite</h1><canvas id="c"></canvas><script>document.title="x"</script>' });
+  const artId = (art.match(/artifact id "([^"]+)"/) || [])[1];
+  const wp = mock.log.webviewPanels[0];
+  assert(artId && wp && wp.title === 'AI: Report vendite' && wp.opts.enableScripts && wp.opts.localResourceRoots.length === 0, 'artifact opens in an editor tab');
+  assert(wp.webview.html.includes("default-src 'none'") && wp.webview.html.includes('<h1>Vendite</h1>') && wp.webview.html.includes('--vscode-foreground'), 'artifact page has no network access and uses the theme');
+  await tool('show_artifact', { window: win, id: artId, title: 'Report vendite 2', kind: 'html', content: '<h1>Aggiornato</h1>' });
+  assert(mock.log.webviewPanels.length === 1 && wp.webview.html.includes('Aggiornato') && wp.title === 'AI: Report vendite 2' && msgs().find((m) => m.artifactId === artId).version === 2, 'same id updates the same tab');
+  await tool('show_artifact', { window: win, title: 'Note', kind: 'markdown', content: '# Titolo\n\n- uno\n- **due**' });
+  assert(mock.log.webviewPanels[1].webview.html.includes('<h1>Titolo</h1>') && mock.log.webviewPanels[1].webview.html.includes('<strong>due</strong>'), 'markdown artifact rendered');
+  await tool('show_artifact', { window: win, title: 'Pagina', kind: 'html', content: '<html><head><meta http-equiv="Content-Security-Policy" content="default-src *"></head><body>p</body></html>' });
+  assert(/<head[^>]*><meta http-equiv="Content-Security-Policy" content="default-src 'none'/.test(mock.log.webviewPanels[2].webview.html), 'a whole page gets our policy first');
+  mock.answers.save = (o) => Uri.file(path.join(root, 'report.html'));
+  await panel({ type: 'saveArtifact', id: artId });
+  assert(read('report.html').includes('Aggiornato'), 'artifact saved as a file');
 
   // ---------- handoff to a new chat, history, link ----------
   const hP = tool('follow_vscode', { cursor, window: win });

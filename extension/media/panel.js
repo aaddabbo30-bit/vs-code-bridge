@@ -74,7 +74,7 @@
     if (!state.hasToken || state.conn === 'unconfigured') { txt = 'Not set up'; cta = `<button class="small cta" data-act="configure">Configure</button>`; }
     else if (state.conn === 'offline') { txt = 'Server unreachable'; cta = `<button class="small sec cta" data-act="configure">Configure</button>`; }
     else if (state.listening) { dot = 'on'; txt = 'AI is listening'; }
-    else { dot = 'warn'; txt = 'Not listening'; cta = `<button class="small cta" data-act="copyPrompt" title="Copy the prompt to paste into an AI chat (new or existing)">Copy prompt</button>`; }
+    else { dot = 'warn'; txt = 'Not listening'; cta = `<button class="small cta" data-act="copyPrompt" title="Connect a new AI chat, or one that already exists">Connect chat</button>`; }
     if (state.windows > 1 && state.windowLabel) txt += ' · ' + state.windowLabel;
     statusEl.innerHTML = cta
       ? `<span class="pill-status compact" title="${esc(txt + (state.connError ? ': ' + state.connError : ''))}"><span class="dot ${dot}"></span></span>${cta}`
@@ -97,7 +97,7 @@
   }
 
   // ---------- messages ----------
-  const cmdState = { auto: ['run', 'ok'], asking: ['waiting for your approval', 'warn'], running: ['running', 'info'], done: ['done', 'ok'], failed: ['failed', 'err'], denied: ['denied', 'muted'] };
+  const cmdState = { auto: ['allowed', 'ok'], readonly: ['read-only', 'muted'], always: ['always allowed', 'ok'], asking: ['waiting for you', 'warn'], running: ['running', 'info'], done: ['done', 'ok'], failed: ['failed', 'err'], denied: ['denied', 'muted'] };
   const editState = { pending: ['to review', 'info'], accepted: ['accepted', 'ok'], applied: ['applied', 'ok'], rejected: ['rejected', 'muted'], expired: ['expired', 'muted'], reverted: ['undone', 'warn'], partial: ['stopped halfway', 'err'] };
   const stepIcon = { done: 'pass-filled', in_progress: 'circle-filled', skipped: 'circle-slash', pending: 'circle-large-outline' };
   const opIcon = { mkdir: 'new-folder', move: 'arrow-right', rename: 'edit', trash: 'trash' };
@@ -175,9 +175,20 @@
       if (m.requestId == null && m.cpId) acts += undoHtml(checkpointOf(null, m.cpId));
       return `<div class="msg card fileops ${esc(m.state)}${fresh}"><div class="head">${ic('files')}<span class="title">Organize files</span>${badge(editState[m.state])}</div>${m.desc ? `<div class="desc">${esc(m.desc)}</div>` : ''}<div class="desc muted">${esc(m.summary || '')}${base ? ' · in ' + esc(base) : ''}</div>${list}${acts}</div>`;
     }
-    if (m.role === 'cmd') return `<div class="msg card cmd${fresh}">${ic('terminal')}<code>${esc(m.text)}</code>${badge(cmdState[m.state])}</div>`;
+    if (m.role === 'cmd') {
+      if (m.state === 'asking' && !ro && m.cmdId) {
+        const pre = m.prefix && m.prefix.length > 28 ? m.prefix.slice(0, 26) + '…' : m.prefix;
+        return `<div class="msg card ask${fresh}"><div class="head">${ic('terminal')}<span class="title">The AI wants to run a command</span></div><pre class="cmdline"><code>${esc(m.text)}</code></pre>${m.reason ? `<div class="desc">${esc(m.reason)}</div>` : ''}<div class="desc muted">in ${esc(m.cwd || '')}</div>
+          <div class="acts"><button class="small" data-act="cmdAnswer" data-id="${esc(m.cmdId)}" data-choice="run">${ic('play')} Run</button><button class="small sec" data-act="cmdAnswer" data-id="${esc(m.cmdId)}" data-choice="always" title="Run it, and from now on run «${esc(m.prefix || '')}…» without asking">${ic('check-all')} Always allow “${esc(pre || '')}”</button><button class="small sec" data-act="cmdAnswer" data-id="${esc(m.cmdId)}" data-choice="deny">${ic('close')} Deny</button></div></div>`;
+      }
+      return `<div class="msg cmd ${esc(m.state)}${fresh}" title="${esc(m.cwd || '')}">${ic('terminal')}<code>${esc(m.text)}</code>${badge(cmdState[m.state])}</div>`;
+    }
+    if (m.role === 'artifact') {
+      const icn = m.kind === 'markdown' ? 'markdown' : m.kind === 'svg' ? 'symbol-color' : 'preview';
+      return `<div class="msg card artifact${fresh}"><div class="head">${ic(icn)}<span class="title">${esc(m.title)}</span>${m.version > 1 ? `<span class="badge">v${m.version}</span>` : ''}</div><div class="desc muted">Opened in the middle of VS Code</div><div class="acts"><button class="small" data-act="openArtifact" data-id="${esc(m.artifactId)}">${ic('link-external')} Open</button><button class="small sec" data-act="saveArtifact" data-id="${esc(m.artifactId)}">${ic('save')} Save as file</button></div></div>`;
+    }
     let extra = '';
-    if (!ro && m.prompt) extra += ` <button class="link" data-act="copyPrompt">Copy prompt</button>`;
+    if (!ro && m.prompt) extra += ` <button class="link" data-act="copyPrompt">Connect chat</button>`;
     if (!ro && m.action === 'openMemory') extra += ` <button class="link" data-act="openMemory">Open</button>`;
     if (!ro && m.action === 'linkChat') extra += ` <button class="link" data-act="linkChat">Link the chat</button>`;
     return `<div class="msg system${fresh}">${ic(m.icon || 'info')}${esc(m.text)}${extra}</div>`;
@@ -186,7 +197,7 @@
   function welcome() {
     let cta = '';
     if (!state.hasToken || state.conn === 'unconfigured') cta = `<div class="cta-row"><button data-act="configure">${ic('gear')} Configure server and token</button></div>`;
-    else if (!state.listening) cta = `<div class="cta-row"><button data-act="copyPrompt">${ic('copy')} Copy the prompt for the AI chat</button></div><div>Paste it into a new chat, or into a chat where you already discussed the work: the AI will use that context here.</div>`;
+    else if (!state.listening) cta = `<div class="cta-row"><button data-act="copyPrompt">${ic('plug')} Connect an AI chat</button></div><div>A new chat, or one where you already discussed the work: the AI will use that context here.</div>`;
     const sug = state.listening ? `<div class="suggest">
       <button data-act="suggest" data-text="Explain what this file does" data-file="1">Explain the active file</button>
       <button data-act="suggest" data-text="Find possible bugs in the selected code">Find bugs in the selection</button>
@@ -194,7 +205,7 @@
       <button data-act="suggest" data-text="Look at my Downloads folder (~/Downloads) and propose how to organize it">Organize Downloads</button></div>` : '';
     return `<div class="empty"><div class="logo">${ic('sparkle')}</div><h3>AI in VS Code</h3>${cta}
       <ol><li>Type here, or select code and press <span class="kbd">Ctrl+Alt+C</span> (ask) or <span class="kbd">Ctrl+Alt+E</span> (edit).</li>
-      <li>Drop files here to attach them to the request.</li>
+      <li>Drop files on <strong>Attachments</strong> below to add them to the request.</li>
       <li>Changes arrive as diffs. With <strong>Agent</strong> on, the AI applies them itself and you undo everything with one click.</li></ol>${sug}</div>`;
   }
 
@@ -257,7 +268,7 @@
       q.value = b.dataset.text;
       if (b.dataset.file) { opts.file = true; opts.sel = false; renderStatus(); saveUi(); }
       grow(); q.focus();
-    } else vscode.postMessage({ type: act, id: b.dataset.id });
+    } else vscode.postMessage({ type: act, id: b.dataset.id, choice: b.dataset.choice });
   });
 
   function grow() { q.style.height = 'auto'; q.style.height = Math.min(q.scrollHeight, 200) + 'px'; placeToBottom(); }

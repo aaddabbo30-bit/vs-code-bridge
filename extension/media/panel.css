@@ -161,3 +161,11 @@ body.dragging #drop { display: flex; }
 .card .desc.err { color: var(--err); }
 ul.files.ops li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.small-link { font-size: 11px; margin-top: 4px; }
+/* command approvals */
+.card.ask { border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); }
+.card.ask pre.cmdline { margin: 6px 0 2px; padding: 6px 8px; border-radius: 6px; background: var(--vscode-textCodeBlock-background); white-space: pre-wrap; word-break: break-all; }
+.card.ask pre.cmdline code { background: none; padding: 0; }
+.msg.cmd { display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--muted); }
+.msg.cmd code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg.cmd.failed { color: var(--err); }
+.msg.cmd code { background: none; padding: 0; }
