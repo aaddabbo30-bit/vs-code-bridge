@@ -80,6 +80,8 @@ async function activate(context) {
     if (m.role === 'cmd' && (m.state === 'asking' || m.state === 'running')) m.state = m.state === 'asking' ? 'denied' : 'done';
   });
 
+  await migrateBridgeDir();
+
   panel = new ChatViewProvider(context.extensionUri);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('aiBridge.chat', panel, { webviewOptions: { retainContextWhenHidden: true } }));
 
@@ -436,6 +438,23 @@ function bridgeUri(name) {
   if (!f) throw new Error('No folder is open in VS Code: the memory and the handoff are saved in the project.');
   return vscode.Uri.joinPath(f.uri, BRIDGE_DIR, name);
 }
+// Earlier versions kept the project memory in .claude-bridge/: it moves to .ai-bridge/ (nothing is overwritten).
+async function migrateBridgeDir() {
+  const f = folders()[0];
+  if (!f) return;
+  const oldDir = vscode.Uri.joinPath(f.uri, '.claude-bridge');
+  const newDir = vscode.Uri.joinPath(f.uri, BRIDGE_DIR);
+  try {
+    if (!(await exists(oldDir))) return;
+    if (!(await exists(newDir))) { await vscode.workspace.fs.rename(oldDir, newDir, { overwrite: false }); return; }
+    for (const name of ['MEMORY.md', 'HANDOFF.md']) {
+      const o = vscode.Uri.joinPath(oldDir, name);
+      const n = vscode.Uri.joinPath(newDir, name);
+      if ((await exists(o)) && !(await exists(n))) await vscode.workspace.fs.rename(o, n, { overwrite: false });
+    }
+  } catch { /* leave it as it is */ }
+}
+
 async function readBridgeFile(name) {
   try { return (await readText(bridgeUri(name))).text; } catch { return null; }
 }

@@ -62,6 +62,7 @@ echo BRIDGE_TOKEN=testtoken123 > .dev.vars
 npx wrangler dev --port 8799 --ip 127.0.0.1   # in another terminal
 node e2e-test.mjs                              # the server, with fake VS Code windows
 node ../extension/test/integration.js          # the real extension, with a simulated VS Code
+node ../extension/test/upgrade.js 083dbe0      # an earlier version's data, opened by the current one
 ```
 
 ## MCP tools
