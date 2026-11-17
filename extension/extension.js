@@ -1166,7 +1166,15 @@ function splitCommand(cmd) {
       continue;
     }
     if (c === '"' || c === "'") { quote = c; hasTok = true; continue; }
-    if (c === '\n' || c === '\r' || c === '>' || c === '<' || c === '`' || c === '^') return null;
+    if (c === '>') {
+      // only 2>&1, 1>&2, >nul, 2>nul, >/dev/null, 2>/dev/null: they write no file
+      const m = cmd.slice(i).match(/^>(&[12]|\s*(nul|\/dev\/null)(?=$|[\s&|;]))/i);
+      if (!m || (hasTok && cur !== '1' && cur !== '2')) return null;
+      if (hasTok) { cur = ''; hasTok = false; }
+      i += m[0].length - 1;
+      continue;
+    }
+    if (c === '\n' || c === '\r' || c === '<' || c === '`' || c === '^') return null;
     if (c === '$' && cmd[i + 1] === '(') return null;
     if (c === '&' || c === '|' || c === ';') { if (cmd[i + 1] === c) i++; endSeg(); continue; }
     if (c === ' ' || c === '\t') { endTok(); continue; }
@@ -1178,13 +1186,22 @@ function splitCommand(cmd) {
 }
 
 const RO_PLAIN = new Set(['dir', 'ls', 'tree', 'type', 'cat', 'head', 'tail', 'pwd', 'cd', 'echo', 'where', 'which', 'whoami', 'hostname', 'wc', 'stat', 'file', 'du', 'df', 'findstr', 'grep', 'egrep', 'fgrep', 'rg', 'find', 'sort', 'cut', 'diff', 'fc', 'ver', 'uname', 'tasklist', 'ps', 'nl', 'basename', 'dirname', 'realpath', 'readlink', 'md5sum', 'sha256sum', 'certutil',
-  'get-childitem', 'gci', 'get-content', 'gc', 'get-item', 'gi', 'get-itemproperty', 'gp', 'get-location', 'gl', 'select-string', 'sls', 'test-path', 'resolve-path', 'measure-object', 'select-object', 'sort-object', 'format-table', 'ft', 'format-list', 'fl', 'where-object', 'out-string', 'get-filehash', 'get-date', 'get-command', 'get-process']);
+  'chcp', 'systeminfo', 'nproc', 'free', 'uptime',
+  'get-childitem', 'gci', 'get-content', 'gc', 'get-item', 'gi', 'get-itemproperty', 'gp', 'get-location', 'gl', 'select-string', 'sls', 'test-path', 'resolve-path', 'measure-object', 'select-object', 'select', 'sort-object', 'format-table', 'ft', 'format-list', 'fl', 'format-wide', 'fw', 'where-object', 'out-string', 'out-null', 'out-host', 'get-filehash', 'get-date', 'get-command', 'get-process',
+  'import-csv', 'ipcsv', 'convertfrom-csv', 'convertto-csv', 'convertfrom-json', 'convertto-json', 'get-member', 'gm', 'group-object', 'group', 'compare-object', 'get-unique', 'get-psdrive', 'get-volume', 'get-service', 'get-computerinfo', 'get-acl', 'get-itempropertyvalue']);
 const VERSION_TOOLS = new Set(['node', 'npm', 'npx', 'python', 'python3', 'py', 'pip', 'pip3', 'java', 'javac', 'git', 'dotnet', 'go', 'cargo', 'rustc', 'ruby', 'php', 'perl', 'r', 'rscript', 'conda', 'docker', 'code', 'gcc', 'make', 'cmake', 'mvn', 'gradle', 'yarn', 'pnpm', 'tsc', 'deno', 'bun', 'uv', 'poetry']);
 const VERSION_FLAGS = new Set(['--version', '-v', '-V', 'version', '-version', '--info']);
 const BAD_ARGS = { find: /^-(delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$/, sort: /^(-o|--output.*|\/o)$/i, rg: /^--pre/, head: /^(-f|--follow.*|-F)$/, tail: /^(-f|--follow.*|-F)$/, certutil: /^(?!-hashfile$).*$/i };
 
 function gitReadOnly(args) {
   if (args.some((a) => /^(-c|--exec-path.*|--output.*|-O|--open-files-in-pager.*|--upload-pack.*)$/.test(a))) return false;
+  args = args.slice();
+  // options that only say where the repository is, or turn the pager off
+  while (args.length) {
+    if (args[0] === '-C' && args.length > 1) args.splice(0, 2);
+    else if (/^(--no-pager|-P|--no-optional-locks|--git-dir=.+|--work-tree=.+)$/.test(args[0])) args.shift();
+    else break;
+  }
   const [sub, ...rest] = args;
   const flagsOnly = (ok) => rest.every((a) => ok.includes(a));
   switch (sub) {
@@ -1208,7 +1225,7 @@ function segmentReadOnly(tokens) {
     let i = 0;
     while (i < args.length && /^-(noprofile|nop|noninteractive|noni|nologo)$/i.test(args[i])) i++;
     if (!/^-(command|c)$/i.test(args[i] || '')) return false;
-    const inner = args.slice(i + 1).join(' ');
+    const inner = args.slice(i + 1).join(' ').replace(/(^|\s)[*12]?>\s*\$null\b/gi, ' ');
     if (/[{}$@()&.]/.test(inner.replace(/\.\w+/g, '').replace(/\\|\//g, ''))) return false;
     return commandReadOnly(inner);
   }
@@ -1237,7 +1254,12 @@ function commandReadOnly(cmd) {
 function alwaysPrefix(command) {
   const t = command.trim().split(/\s+/);
   const first = t[0].toLowerCase().replace(/\.exe$/, '');
-  if (['python', 'python3', 'py', 'node', 'powershell', 'pwsh', 'cmd', 'bash', 'sh', 'zsh', 'ruby', 'perl', 'php', 'rscript', 'r', 'java', 'deno', 'bun'].includes(first)) return command.trim();
+  if (['python', 'python3', 'py', 'node', 'powershell', 'pwsh', 'cmd', 'bash', 'sh', 'zsh', 'ruby', 'perl', 'php', 'rscript', 'r', 'java', 'deno', 'bun'].includes(first)) {
+    // a script file: that script, with any plain arguments. Inline code (-c, -e, -Command, /c) only exactly.
+    if (t[1] && !t[1].startsWith('-') && !t[1].startsWith('/') && !/["'`$]/.test(t[1])) return t.slice(0, 2).join(' ');
+    if (t[2] && /^(-m|-jar|-file)$/i.test(t[1]) && !/["'`$]/.test(t[2])) return t.slice(0, 3).join(' ');
+    return command.trim();
+  }
   if (['npm', 'pnpm', 'yarn'].includes(first) && ['run', 'exec', 'run-script'].includes(t[1]) && t[2]) return t.slice(0, 3).join(' ');
   if (['git', 'npm', 'npx', 'pnpm', 'yarn', 'pip', 'pip3', 'dotnet', 'docker', 'cargo', 'go', 'conda', 'kubectl', 'terraform', 'mvn', 'gradle', 'make', 'poetry', 'uv'].includes(first) && t[1]) return t.slice(0, 2).join(' ');
   return t[0];
@@ -1256,6 +1278,7 @@ function askToRun(msg) {
     const id = msg.cmdId;
     const timer = setTimeout(() => answerCmd(id, 'timeout'), 15 * 60000);
     pendingCmds.set(id, (choice) => { clearTimeout(timer); resolve(choice); });
+    updateStatus();
     if (!panelVisible()) {
       vscode.window.showInformationMessage(`The AI wants to run: ${msg.text}`, 'Run', 'Always allow', 'Deny').then((c) => {
         if (c) answerCmd(id, c === 'Run' ? 'run' : c === 'Always allow' ? 'always' : 'deny');
@@ -1268,6 +1291,7 @@ function answerCmd(id, choice) {
   const done = pendingCmds.get(id);
   if (!done) return;
   pendingCmds.delete(id);
+  updateStatus();
   done(choice);
 }
 
@@ -1967,6 +1991,9 @@ function refresh() {
 function updateStatus() {
   if (!statusItem) return;
   const ag = agentMode ? ' · agent' : '';
+  const waiting = pendingCmds.size;
+  statusItem.backgroundColor = waiting ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  if (waiting) { statusItem.text = `$(bell-dot) AI: ${waiting} ${waiting === 1 ? 'command' : 'commands'} waiting for you`; statusItem.tooltip = 'Open the AI panel to run or deny it'; return; }
   if (conn === 'unconfigured') { statusItem.text = '$(gear) AI: set up'; statusItem.tooltip = 'AI Bridge: Configure'; }
   else if (conn === 'offline') { statusItem.text = '$(debug-disconnect) AI: offline'; statusItem.tooltip = connError; }
   else if (listening) { statusItem.text = '$(comment-discussion) AI: listening' + ag; statusItem.tooltip = 'An AI chat is following VS Code'; }

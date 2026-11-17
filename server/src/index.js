@@ -129,14 +129,30 @@ export class Bridge {
   }
   // The window a tool call goes to: the one named, else the one that sent the request, else the one that sent the last request, else the most recent.
   target(a = {}) {
-    if (a.window) return this.findWindow(a.window);
     const rid = Number(a.request_id);
+    if (a.window) {
+      const w = this.findWindow(a.window);
+      if (this.online(this.clients.get(w))) return w;
+      if (a.request_id != null && this.reqClient.has(rid)) return this.reqClient.get(rid);
+      const alt = this.stand_in(w);
+      return alt ? alt.id : w;
+    }
     if (a.request_id != null && this.reqClient.has(rid)) return this.reqClient.get(rid);
     if (this.lastReqClient && this.online(this.clients.get(this.lastReqClient))) return this.lastReqClient;
     const on = this.onlineClients().sort((x, y) => y.lastSeen - x.lastSeen);
     if (on.length) return on[0].id;
     const r = this.mostRecentClient();
     return r ? r.id : null;
+  }
+
+  // A window that is not connected (another workspace opened since, a renamed workspace...): the connected window of the
+  // same workspace on the same computer stands in for it, or the only window that is connected.
+  stand_in(id) {
+    const c = this.clients.get(id);
+    const on = this.onlineClients();
+    const same = c ? on.filter((x) => x.label === c.label) : [];
+    if (same.length === 1) return same[0];
+    return on.length === 1 ? on[0] : null;
   }
 
   // ---------- chats following VS Code ----------
@@ -413,7 +429,16 @@ export class Bridge {
   }
 
   async toolFollow(a) {
-    const key = a.window ? this.findWindow(a.window) : '*';
+    let key = a.window ? this.findWindow(a.window) : '*';
+    let note = '';
+    if (key !== '*' && !this.online(this.clients.get(key)) && this.onlineClients().length) {
+      // the window this chat was given is not connected: follow what is, instead of waiting for nothing
+      const was = this.clients.get(key);
+      const alt = this.stand_in(key);
+      const name = `window "${key}"${was ? ' (' + was.label + ')' : ''} is not connected`;
+      if (alt && (!was || alt.label === was.label)) { note = `${name}; following "${alt.id}" (${alt.label}) instead.`; key = alt.id; }
+      else { note = `${name}, so this round follows every connected window: ${this.windowList()}.`; key = '*'; }
+    }
     if (a.reply && String(a.reply.text || '').trim()) this.toolReply({ ...a.reply, window: a.reply.window || a.window });
     let cursor = Number.isInteger(a.cursor) ? a.cursor : parseInt(a.cursor, 10);
     const first = !Number.isFinite(cursor);
@@ -450,8 +475,8 @@ export class Bridge {
 
     const bound = key !== '*';
     const multi = bound || this.onlineClients().length > 1;
-    const again = `cursor ${newCursor}${bound ? ` and window "${key}"` : ''}`;
-    const parts = [`cursor: ${newCursor} — VS Code: ${bound ? this.extStatus(key) + ` — following window "${key}" (${this.clientName(key)})` : this.extStatusAll()}`];
+    const again = `cursor ${newCursor}${a.window ? ` and window "${a.window}"` : ''}`;
+    const parts = [`cursor: ${newCursor} — VS Code: ${bound ? this.extStatus(key) + ` — following window "${key}" (${this.clientName(key)})` : this.extStatusAll()}${note ? '\nNote: ' + note : ''}`];
     if (first) parts.push(fmtMemory(mem));
     if (!items.length) {
       parts.push(`No new requests. Call follow_vscode again right away with ${again}. Don't write in the chat.`);

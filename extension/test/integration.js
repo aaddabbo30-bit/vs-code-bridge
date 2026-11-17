@@ -73,9 +73,9 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
 
   // ---------- which commands count as read-only ----------
   const RO = ext._test.commandReadOnly;
-  for (const c of ['dir', 'dir /s *.py', 'ls -la src', 'type README.md', 'cat a.txt | grep x', 'git status', 'git log --oneline -5', 'git diff HEAD~1', 'git branch -a', 'git remote -v', 'node --version', 'python -m pip list', 'pip show requests', 'npm ls', 'findstr /s TODO *.py', 'cd src && dir', 'powershell -NoProfile -Command "Get-ChildItem ~/Downloads | Measure-Object"', 'echo %USERPROFILE%', 'tree /f', 'where python', 'git config --get user.name']) assert(RO(c), 'read-only: ' + c);
-  for (const c of ['del a.txt', 'rm -rf x', 'echo hi > a.txt', 'type a.txt >> b.txt', 'git commit -m x', 'git branch -D main', 'git push', 'git -c core.pager=x log', 'git log --output=a.txt', 'npm install', 'npm run build', 'pip install x', 'python script.py', 'node -e "1"', 'find . -delete', 'find . -exec rm {} ;', 'sort a -o b', 'd^el a.txt', 'dir & del a.txt', 'curl https://x.y', 'powershell -Command "Remove-Item a"', 'powershell -Command "Get-ChildItem | ForEach-Object { Remove-Item $_ }"', 'cmd /c del a', 'tail -f log.txt', 'rg --pre cat x', 'set', 'env']) assert(!RO(c), 'asks first: ' + c);
-  assert(ext._test.alwaysPrefix('npm run build -- --prod') === 'npm run build' && ext._test.alwaysPrefix('git commit -m x') === 'git commit' && ext._test.alwaysPrefix('python tools/x.py --a') === 'python tools/x.py --a', '"Always allow" remembers a safe prefix');
+  for (const c of ['dir', 'dir /s *.py', 'ls -la src', 'type README.md', 'cat a.txt | grep x', 'git status', 'git log --oneline -5', 'git diff HEAD~1', 'git branch -a', 'git remote -v', 'node --version', 'python -m pip list', 'pip show requests', 'npm ls', 'findstr /s TODO *.py', 'cd src && dir', 'powershell -NoProfile -Command "Get-ChildItem ~/Downloads | Measure-Object"', 'echo %USERPROFILE%', 'tree /f', 'where python', 'git config --get user.name', 'git -C nea_repo log --oneline -5', 'git --no-pager diff', 'dir /b *.py 2>nul', 'git status 2>&1', 'ls -la >/dev/null 2>&1', 'powershell -NoProfile -Command "Import-Csv data.csv | Select-Object -First 5"', 'powershell -Command "Get-ChildItem C:/x -Recurse -ErrorAction SilentlyContinue 2>$null | Measure-Object"']) assert(RO(c), 'read-only: ' + c);
+  for (const c of ['del a.txt', 'rm -rf x', 'echo hi > a.txt', 'type a.txt >> b.txt', 'git commit -m x', 'git branch -D main', 'git push', 'git -c core.pager=x log', 'git log --output=a.txt', 'npm install', 'npm run build', 'pip install x', 'python script.py', 'node -e "1"', 'find . -delete', 'find . -exec rm {} ;', 'sort a -o b', 'd^el a.txt', 'dir & del a.txt', 'curl https://x.y', 'powershell -Command "Remove-Item a"', 'powershell -Command "Get-ChildItem | ForEach-Object { Remove-Item $_ }"', 'cmd /c del a', 'tail -f log.txt', 'rg --pre cat x', 'set', 'env', 'dir > out.txt', 'echo hi 2> err.txt', 'git status 2>&1 > x.txt', 'type a.txt 1>b.txt', 'git -C x commit -m y', 'powershell -Command "Get-Content a | Out-File b"']) assert(!RO(c), 'asks first: ' + c);
+  assert(ext._test.alwaysPrefix('npm run build -- --prod') === 'npm run build' && ext._test.alwaysPrefix('git commit -m x') === 'git commit' && ext._test.alwaysPrefix('python tools/x.py --a') === 'python tools/x.py' && ext._test.alwaysPrefix('python -c "print(1)"') === 'python -c "print(1)"' && ext._test.alwaysPrefix('python -m pytest -q') === 'python -m pytest', '"Always allow" remembers a safe prefix (a script with any arguments, inline code only exactly)');
 
   // ---------- drop files on the Attachments view ----------
   const dropAt = (mime, val) => ({ get: (m) => (m === mime ? { asString: async () => val } : undefined), forEach() {} });
@@ -168,8 +168,18 @@ const cursorOf = (t) => Number(t.match(/cursor: (\d+)/)[1]);
   const rcP = tool('run_command', { window: win, command: nodeCmd, reason: 'calcolo' });
   const ask = await until(() => msgs().find((m) => m.role === 'cmd' && m.text === nodeCmd && m.state === 'asking'), 'approval card');
   assert(ask.reason === 'calcolo' && ask.prefix === nodeCmd && !mock.log.info.some((t) => t.includes(nodeCmd)), 'approval asked in the panel, no pop-up while the panel is open');
+  const bar = mock.log.statusItems[0];
+  assert(bar.text.includes('1 command waiting') && bar.backgroundColor, 'the status bar shows a command is waiting');
   await panel({ type: 'cmdAnswer', id: ask.cmdId, choice: 'always' });
   assert((await rcP).includes('42') && mock.config.aiBridge.autoApproveCommands.includes(nodeCmd), '"Always allow" runs it and remembers it');
+  assert(!bar.text.includes('waiting') && !bar.backgroundColor, 'the status bar is back to normal');
+  fs.mkdirSync(file('tools'));
+  fs.writeFileSync(file('tools', 'hello.js'), 'console.log("hi " + process.argv[2])');
+  const s1P = tool('run_command', { window: win, command: 'node tools/hello.js a' });
+  const ask3 = await until(() => msgs().find((m) => m.role === 'cmd' && m.text === 'node tools/hello.js a' && m.state === 'asking'), 'script approval card');
+  await panel({ type: 'cmdAnswer', id: ask3.cmdId, choice: 'always' });
+  assert((await s1P).includes('hi a'), 'script allowed once and for all');
+  assert((await tool('run_command', { window: win, command: 'node tools/hello.js b' })).includes('hi b') && msgs().filter((m) => m.text === 'node tools/hello.js b').pop().state === 'done', 'the same script with other arguments no longer asks');
   assert((await tool('run_command', { window: win, command: nodeCmd })).includes('42') && msgs().filter((m) => m.text === nodeCmd).pop().state === 'done', 'an always-allowed command no longer asks');
   const denyP = tool('run_command', { window: win, command: 'echo hi > made.txt' });
   const ask2 = await until(() => msgs().find((m) => m.role === 'cmd' && m.text === 'echo hi > made.txt' && m.state === 'asking'), 'second approval card');

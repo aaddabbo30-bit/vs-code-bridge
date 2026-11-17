@@ -2,7 +2,7 @@
   "name": "claude-bridge",
   "displayName": "AI Bridge",
   "description": "Use your AI chat inside VS Code through your own VS Code Bridge server — no API keys.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "ale-local",
   "license": "MIT",
   "engines": {

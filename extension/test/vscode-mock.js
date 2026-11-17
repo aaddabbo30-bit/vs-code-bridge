@@ -27,6 +27,7 @@ class TabInputTextDiff {}
 class EventEmitter { constructor() { this.l = []; this.event = (fn) => { this.l.push(fn); return { dispose() {} }; }; } fire(x) { this.l.forEach((f) => f(x)); } }
 class TreeItem { constructor(label) { this.label = label; } }
 class ThemeIcon { constructor(id) { this.id = id; } }
+class ThemeColor { constructor(id) { this.id = id; } }
 
 class Doc {
   constructor(uri, text) { this.uri = uri; this._text = text; this.isDirty = false; this.languageId = path.extname(uri.path).slice(1) || 'plaintext'; }
@@ -61,7 +62,7 @@ function create(root) {
   const providers = {};
   const config = { aiBridge: {}, claudeBridge: {} }; // settings by section
   const defaults = { serverUrl: '', windowName: '', autoApproveCommands: ['git status'], idleMinutes: 20 };
-  const log = { info: [], warn: [], error: [], executed: [], shown: [], status: [], opened: [], trashed: [], untitled: [], webviewPanels: [] };
+  const log = { info: [], warn: [], error: [], executed: [], shown: [], status: [], opened: [], trashed: [], untitled: [], webviewPanels: [], statusItems: [] };
   const trashDir = path.join(root, '.trash-bin');
   const answers = { info: () => undefined, warn: () => undefined, input: () => undefined, pick: () => undefined, open: () => undefined, save: () => undefined };
   const listeners = { termStart: [], termEnd: [] };
@@ -71,7 +72,7 @@ function create(root) {
   const statOf = (p) => { try { return fs.statSync(p); } catch { const e = new Error('FileNotFound: ' + p); e.code = 'FileNotFound'; throw e; } };
 
   const vscode = {
-    Uri, Position, Range, WorkspaceEdit, CodeAction, RelativePattern, TabInputTextDiff, EventEmitter, TreeItem, ThemeIcon,
+    Uri, Position, Range, WorkspaceEdit, CodeAction, RelativePattern, TabInputTextDiff, EventEmitter, TreeItem, ThemeIcon, ThemeColor,
     ViewColumn: { Active: -1, Beside: -2, One: 1 },
     CodeActionKind: { QuickFix: 'quickfix' },
     DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
@@ -156,7 +157,7 @@ function create(root) {
       showOpenDialog: async (o) => answers.open(o),
       showTextDocument: async (d) => { log.shown.push(d.uri ? d.uri.fsPath : String(d)); },
       setStatusBarMessage: (m) => { log.status.push(m); return { dispose() {} }; },
-      createStatusBarItem: () => ({ text: '', tooltip: '', command: '', show() {}, dispose() {} }),
+      createStatusBarItem: () => { const it = { text: '', tooltip: '', command: '', show() {}, dispose() {} }; log.statusItems.push(it); return it; },
       registerWebviewViewProvider: (id, p) => { providers.view = p; return { dispose() {} }; },
       createTreeView: (id, o) => { providers.tree = o; return { dispose() {} }; },
       createWebviewPanel: (type, title, show, opts) => {

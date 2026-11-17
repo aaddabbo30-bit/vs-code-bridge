@@ -141,6 +141,15 @@ assert((await w2.api('GET', '/api/poll?wait=0')).j.claudeListening === true, 'wi
 w2.on = false;
 cursor = Math.max(cursorOf(a), r1.seq, r2.seq);
 
+// a chat bound to a window that is no longer connected (another workspace opened since) does not wait for nothing
+const sbP = tool('follow_vscode', { cursor, window: 'oldwin99' });
+await sleep(400);
+const rS = await w1.request('chat', 'domanda con una finestra vecchia');
+const sb = await sbP;
+assert(sb.includes('domanda con una finestra vecchia') && sb.includes('window "oldwin99" is not connected') && sb.includes('window "oldwin99"'), 'a chat bound to a window that is gone follows the connected ones');
+cursor = cursorOf(sb);
+assert((await tool('read_file', { path: 'x', window: 'oldwin99', request_id: rS.seq })).includes('1| x=1'), 'tools aimed at a window that is gone reach the one that sent the request');
+
 // ---------- other kinds of requests ----------
 const kP = tool('follow_vscode', { cursor });
 await sleep(300);
